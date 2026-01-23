@@ -20,11 +20,13 @@ def to_excel(df_list, sheet_names):
             df.to_excel(writer, index=False, sheet_name=name)
     return output.getvalue()
 
-# --- ESTILOS DE TABLA (COLORES) ---
+# --- ESTILOS DE TABLA (CONTRASTE MEJORADO) ---
 def style_levels(styler):
-    # FLS: Azul claro, SLS: Verde/Cian claro
-    styler.set_properties(subset=[col for col in styler.columns if 'FLS' in col], **{'background-color': '#e1f5fe'})
-    styler.set_properties(subset=[col for col in styler.columns if 'SLS' in col], **{'background-color': '#e0f2f1'})
+    # FLS: Azul muy pálido, SLS: Verde muy pálido. Texto siempre negro para contraste.
+    styler.set_properties(subset=[col for col in styler.columns if 'FLS' in col], 
+                         **{'background-color': '#f0f7ff', 'color': 'black'})
+    styler.set_properties(subset=[col for col in styler.columns if 'SLS' in col], 
+                         **{'background-color': '#f1faf9', 'color': 'black'})
     return styler
 
 # --- TÍTULO Y TABS ---
@@ -79,7 +81,7 @@ with tab_calc:
         hc_sls = math.ceil(wl_sls / hrs_eff) if hrs_eff > 0 else 0
         st.metric("SLS Headcount", hc_sls)
 
-# --- TAB 2: BULK (DETALLE SEPARADO) ---
+# --- TAB 2: BULK ---
 with tab_bulk:
     st.header("Bulk Multi-Month Analysis")
     cv, ca = st.columns(2)
@@ -95,14 +97,11 @@ with tab_bulk:
                 dt = pd.to_datetime(r['Date'])
                 d_l = get_working_days(dt.year, dt.month)
                 cp = (d_l * hrs_shift) * (1 - (shrinkage_input/100))
-                # Cálculos FLS
                 wl_f = ((r['v_em_f']*(1+(growth_input/100))*r['a_em_f'])/3600/f_c) + ((r['v_ch_f']*(1+(growth_input/100))*r['a_ch_f'])/3600/f_c)
                 hc_f = math.ceil(wl_f/cp)
-                # Cálculos SLS (Lógica: si vol <= 1, hc = 1)
                 v_total_s = (r['v_ch_s'] + r['v_em_s']) * (1+(growth_input/100))
                 wl_s = ((r['v_em_s']*(1+(growth_input/100))*r['a_em_s'])/3600/s_c) + ((r['v_ch_s']*(1+(growth_input/100))*r['a_ch_s'])/3600/s_c)
                 hc_s = 1 if (v_total_s > 0 and v_total_s <= 1) else math.ceil(wl_s/cp)
-                
                 bulk_res.append({
                     "Month": dt.strftime('%B %Y'), 
                     "Vol Email FLS": int(r['v_em_f']), "AHT Email FLS": int(r['a_em_f']),
@@ -146,7 +145,6 @@ with tab_micro:
         
         if m_info:
             df_raw['Hour'] = df_raw[time_col].dt.hour
-            # Simulación: asumiendo distribución 50/50 email/chat si el raw no lo dice
             fls_raw = df_raw[~df_raw[team_col].str.contains('SLS', na=False)]
             sls_raw = df_raw[df_raw[team_col].str.contains('SLS', na=False)]
             
@@ -154,15 +152,11 @@ with tab_micro:
             for h in range(24):
                 v_f = len(fls_raw[fls_raw['Hour'] == h]) / num_days
                 v_s = len(sls_raw[sls_raw['Hour'] == h]) / num_days
-                
-                # FLS (Asumiendo proporción del bulk para email/chat)
-                p_e_f = m_info['Vol Email FLS'] / (m_info['Vol Email FLS'] + m_info['Vol Chat FLS'])
+                p_e_f = m_info['Vol Email FLS'] / (m_info['Vol Email FLS'] + m_info['Vol Chat FLS']) if (m_info['Vol Email FLS'] + m_info['Vol Chat FLS']) > 0 else 0.5
                 v_f_e, v_f_c = v_f * p_e_f, v_f * (1-p_e_f)
                 hc_f_act = math.ceil(((v_f_e * m_info['AHT Email FLS'] + v_f_c * m_info['AHT Chat FLS'])/3600/f_c)/(1-(shrinkage_input/100)))
                 hc_f_tar = math.ceil(((v_f_e * a_f_e_tar*60 + v_f_c * a_f_c_tar*60)/3600/f_c)/(1-(shrinkage_input/100)))
-                
-                # SLS (Lógica Vol <= 1)
-                p_e_s = m_info['Vol Email SLS'] / (m_info['Vol Email SLS'] + m_info['Vol Chat SLS'])
+                p_e_s = m_info['Vol Email SLS'] / (m_info['Vol Email SLS'] + m_info['Vol Chat SLS']) if (m_info['Vol Email SLS'] + m_info['Vol Chat SLS']) > 0 else 0.5
                 v_s_e, v_s_c = v_s * p_e_s, v_s * (1-p_e_s)
                 hc_s_act = 1 if (v_s > 0 and v_s <= 1) else math.ceil(((v_s_e * m_info['AHT Email SLS'] + v_s_c * m_info['AHT Chat SLS'])/3600/s_c)/(1-(shrinkage_input/100)))
                 hc_s_tar = 1 if (v_s > 0 and v_s <= 1) else math.ceil(((v_s_e * a_s_e_tar*60 + v_s_c * a_s_c_tar*60)/3600/s_c)/(1-(shrinkage_input/100)))
@@ -176,17 +170,13 @@ with tab_micro:
             df_mesh = pd.DataFrame(mesh)
             st.table(df_mesh.style.pipe(style_levels))
             
-            # Gráfico de Volumen, AHT y Agentes
             st.subheader("Interval Performance: Volume and Staffing")
             st.line_chart(df_mesh.set_index('Hour')[['Vol FLS', 'Vol SLS', 'HC FLS (Act)', 'HC SLS (Act)']])
 
             st.divider()
-            # ROSTER DISCRIMINADO
             st.subheader(f"Suggested Monthly Roster (Headcount: {m_info['Total HC']})")
             days_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
             roster = []
-            
-            # Crear Roster para FLS
             for i in range(1, m_info['FLS HC'] + 1):
                 start_h = (i % 24); end_h = (start_h + 9) % 24
                 off1 = days_order[(i % 7)]; off2 = days_order[((i + 1) % 7)]
@@ -195,8 +185,6 @@ with tab_micro:
                     if d in [off1, off2]: row[d] = "OFF"
                     else: row[d] = f"Work (Lunch @ {(start_h+4)%24:02d}:00)"
                 roster.append(row)
-                
-            # Crear Roster para SLS
             for i in range(1, m_info['SLS HC'] + 1):
                 start_h = (i % 24); end_h = (start_h + 9) % 24
                 off1 = days_order[(i % 7)]; off2 = days_order[((i + 1) % 7)]
@@ -210,6 +198,5 @@ with tab_micro:
             st.table(df_roster.style.pipe(style_levels))
             st.write(f"**Total Assigned Headcount:** {len(df_roster)}")
             
-            # Botón de Descarga
             excel_data = to_excel([df_mesh, df_roster], ["Analysis", "Roster"])
             st.download_button(label="Download Excel Report", data=excel_data, file_name=f"WFM_Report_{current_month}.xlsx")
