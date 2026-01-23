@@ -3,7 +3,7 @@ import math
 
 st.set_page_config(page_title="Calculadora Staffing eVisa", layout="wide")
 
-st.title("📊 Calculadora de Staffing - eVisa Support")
+st.title("Calculadora de Staffing - iVisa Support")
 
 # --- CONFIGURACIÓN ---
 st.sidebar.header("Parámetros Generales")
