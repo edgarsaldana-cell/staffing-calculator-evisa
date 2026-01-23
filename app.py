@@ -121,4 +121,83 @@ with tab_bulk:
 # --- TAB 3: MICRO ---
 with tab_micro:
     st.header("Schedule Optimizer & Roster")
-    if 'bulk_data' not in st.session_state: st.error("Run Bulk
+    if 'bulk_data' not in st.session_state: st.error("Run Bulk tab first."); st.stop()
+    
+    with st.expander("Target Simulation"):
+        c1, c2, c3, c4, c5 = st.columns(5)
+        dt_weekly = c1.number_input("Weekly Downtime (Min)", value=120)
+        a_f_e_tar = c2.number_input("Target FLS Email AHT (m)", value=50.0)
+        a_f_c_tar = c3.number_input("Target FLS Chat AHT (m)", value=60.0)
+        a_s_e_tar = c4.number_input("Target SLS Email AHT (m)", value=100.0)
+        a_s_c_tar = c5.number_input("Target SLS Chat AHT (m)", value=120.0)
+
+    uploaded_file = st.file_uploader("Upload Raw CSV", type="csv")
+    if uploaded_file:
+        df_raw = pd.read_csv(uploaded_file)
+        time_col = 'Conversation started at (America/Lima)'
+        team_col = 'Team currently assigned'
+        df_raw[time_col] = pd.to_datetime(df_raw[time_col])
+        current_month = df_raw[time_col].dt.strftime('%B %Y').iloc[0]
+        num_days = df_raw[time_col].dt.date.nunique()
+        m_info = next((i for i in st.session_state['bulk_data'] if i["Month"] == current_month), None)
+        
+        if m_info:
+            df_raw['Hour'] = df_raw[time_col].dt.hour
+            fls_raw = df_raw[~df_raw[team_col].str.contains('SLS', na=False)]
+            sls_raw = df_raw[df_raw[team_col].str.contains('SLS', na=False)]
+            
+            mesh = []
+            for h in range(24):
+                v_f = len(fls_raw[fls_raw['Hour'] == h]) / num_days
+                v_s = len(sls_raw[sls_raw['Hour'] == h]) / num_days
+                
+                # FLS Staffing 1:1 Logic
+                wl_f_act = ((v_f * m_info['AHT Chat FLS'])/3600/f_c)/(1-(shrinkage_input/100))
+                hc_f_act = min(math.ceil(v_f), math.ceil(wl_f_act)) if v_f > 0 else 0
+                
+                wl_f_tar = ((v_f * a_f_c_tar*60)/3600/f_c)/(1-(shrinkage_input/100))
+                hc_f_tar = min(math.ceil(v_f), math.ceil(wl_f_tar)) if v_f > 0 else 0
+                
+                # SLS Staffing 1:1 Logic
+                wl_s_act = ((v_s * m_info['AHT Chat SLS'])/3600/s_c)/(1-(shrinkage_input/100))
+                hc_s_act = min(math.ceil(v_s), math.ceil(wl_s_act)) if v_s > 0 else 0
+                
+                wl_s_tar = ((v_s * a_s_c_tar*60)/3600/s_c)/(1-(shrinkage_input/100))
+                hc_s_tar = min(math.ceil(v_s), math.ceil(wl_s_tar)) if v_s > 0 else 0
+
+                mesh.append({
+                    "Hour": f"{h:02d}:00", "Vol FLS": int(v_f), "HC FLS (Act)": hc_f_act, "HC FLS (Tar)": hc_f_tar,
+                    "Vol SLS": int(v_s), "HC SLS (Act)": hc_s_act, "HC SLS (Tar)": hc_s_tar, "Total HC": hc_f_act + hc_s_act
+                })
+            
+            st.subheader("Hourly Distribution (FLS and SLS)")
+            df_mesh = pd.DataFrame(mesh)
+            st.table(df_mesh.style.pipe(style_levels))
+            
+            st.line_chart(df_mesh.set_index('Hour')[['Vol FLS', 'Vol SLS', 'HC FLS (Act)', 'HC SLS (Act)']])
+
+            st.divider()
+            st.subheader(f"Suggested Monthly Roster (Headcount: {m_info['Total HC']})")
+            days_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+            roster = []
+            
+            # FLS Agents
+            for i in range(1, m_info['FLS HC'] + 1):
+                start_h = (i % 24); end_h = (start_h + 9) % 24
+                off1 = days_order[(i % 7)]; off2 = days_order[((i + 1) % 7)]
+                row = {"Agent": f"Agent FLS {i:02d}", "Level": "FLS", "Shift": f"{start_h:02d}:00-{end_h:02d}:00"}
+                for d in days_order:
+                    if d in [off1, off2]: row[d] = "OFF"
+                    else: row[d] = f"Work (Lunch @ {(start_h+4)%24:02d}:00)"
+                roster.append(row)
+            # SLS Agents
+            for i in range(1, m_info['SLS HC'] + 1):
+                start_h = (i % 24); end_h = (start_h + 9) % 24
+                off1 = days_order[(i % 7)]; off2 = days_order[((i + 1) % 7)]
+                row = {"Agent": f"Agent SLS {i:02d}", "Level": "SLS", "Shift": f"{start_h:02d}:00-{end_h:02d}:00"}
+                for d in days_order:
+                    if d in [off1, off2]: row[d] = "OFF"
+                    else: row[d] = f"Work (Lunch @ {(start_h+4)%24:02d}:00)"
+                roster.append(row)
+            
+            st.table(pd.DataFrame(roster).style.pipe(style_levels))
