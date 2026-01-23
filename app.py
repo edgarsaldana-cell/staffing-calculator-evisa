@@ -1,30 +1,33 @@
 import streamlit as st
 import math
 import pandas as pd
-from datetime import datetime
 
 # --- PAGE CONFIG & CUSTOM STYLES ---
-st.set_page_config(page_title="Staffing Tool", layout="wide")
+st.set_page_config(page_title="Workforce Management Tool", layout="wide")
 
-# Custom CSS for Company Colors
-st.markdown(f"""
+# Custom CSS for Company Colors - Fixed Syntax
+st.markdown("""
     <style>
-    .stApp {{
+    .stApp {
         background-color: #ecfbff;
-        color: #0b3947;
-    }}
-    h1, h2, h3, p, span, label, .stMetric {{
+    }
+    h1, h2, h3, p, span, label, .stMetric, .stMarkdown {
         color: #0b3947 !important;
-    }}
-    .stNumberInput input, .stSelectbox div {{
-        background-color: #ffffff;
-        color: #0b3947;
-    }}
+    }
+    .stNumberInput input, .stSelectbox div {
+        background-color: #ffffff !important;
+        color: #0b3947 !important;
+    }
+    /* Style for tabs */
+    .stTabs [data-baseweb="tab-list"] button [data-testid="stMarkdownContainer"] p {
+        color: #0b3947 !important;
+    }
     </style>
-    """, unsafe_content_label=True)
+    """, unsafe_allow_html=True)
 
 # --- HELPER FUNCTIONS ---
 def get_working_days(year, month):
+    # Calculate business days (Mon-Fri) using pandas
     start = pd.Timestamp(year, month, 1)
     end = start + pd.offsets.MonthEnd(0)
     return len(pd.bdate_range(start, end))
@@ -48,20 +51,18 @@ with tab_calc:
                  "July":7, "August":8, "September":9, "October":10, "November":11, "December":12}
     
     work_days = get_working_days(selected_year, month_map[selected_month_name])
-    st.sidebar.write(f"Net Working Days: **{work_days}**")
-
+    
     shrinkage = st.sidebar.slider("Shrinkage (%)", 0, 50, 10) / 100
     growth = st.sidebar.slider("Growth Factor (%)", 0, 100, 0) / 100
     hrs_shift = st.sidebar.number_input("Hours per Shift", value=8)
 
-    # Agent Capacity
+    # Agent Capacity Calculation
     hrs_eff = (work_days * hrs_shift) * (1 - shrinkage)
     
-    # Calculation Logic for Inputs
     st.sidebar.divider()
     st.sidebar.subheader("📈 Monthly Summary")
     
-    # Initial placeholders for summary
+    # Placeholders for dynamic summary
     summary_placeholder = st.sidebar.empty()
 
     # --- INPUTS ---
@@ -93,36 +94,4 @@ with tab_calc:
 
     # --- UPDATE SIDEBAR SUMMARY ---
     total_vol = (v_c_f + v_e_f + v_c_s + v_e_s)
-    avg_aht = (a_c_f + a_e_f + a_c_s + a_e_s) / 4
-    total_hc = hc_fls + hc_sls
-    
-    summary_placeholder.markdown(f"""
-    - **Total Vol:** {total_vol:,.0f}
-    - **Avg AHT:** {avg_aht:.0f} sec
-    - **Total HC:** {total_hc} Agents
-    """)
-
-with tab_bulk:
-    st.header("Bulk Input Mode")
-    st.write("Paste your data below. Format: Month, Year, Vol, AHT")
-    
-    bulk_data = st.text_area("Paste CSV/Excel data here (Month, Year, Vol, AHT)", 
-                             "December, 2025, 17732, 4500\nJanuary, 2026, 15000, 4200")
-    
-    if st.button("Calculate Bulk"):
-        # Simple parser for the text area
-        lines = [line.split(",") for line in bulk_data.split("\n") if line]
-        results = []
-        for l in lines:
-            m_idx = month_map[l[0].strip()]
-            y_val = int(l[1].strip())
-            v_val = float(l[2].strip()) * (1 + growth)
-            a_val = float(l[3].strip())
-            
-            d_lab = get_working_days(y_val, m_idx)
-            cap = (d_lab * hrs_shift) * (1 - shrinkage)
-            # Using 1.75 as an average concurrency for the bulk preview
-            staff = math.ceil(((v_val * a_val) / 3600 / 1.75) / cap)
-            results.append({"Month": l[0], "Year": y_val, "Volume": v_val, "Req. HC": staff})
-        
-        st.table(pd.DataFrame(results))
+    total_hc = hc_fls + hc
