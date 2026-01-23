@@ -32,7 +32,6 @@ with tab_calc:
     
     work_days = get_working_days(selected_year, month_map[selected_month_name])
     
-    # Modificación 1: Inputs numéricos para Shrinkage y Growth
     shrinkage_input = st.sidebar.number_input("Shrinkage (%)", min_value=0.0, max_value=100.0, value=10.0)
     shrinkage = shrinkage_input / 100
     
@@ -47,9 +46,7 @@ with tab_calc:
     st.sidebar.subheader("📈 Monthly Summary")
     summary_placeholder = st.sidebar.empty()
 
-    # --- INPUTS ---
     col1, col2 = st.columns(2)
-    
     with col1:
         st.header("FLS (Level 1)")
         f_c = st.number_input("FLS Concurrency", value=2.0)
@@ -57,7 +54,6 @@ with tab_calc:
         a_c_f = st.number_input("Chat AHT FLS (sec)", value=3731)
         v_e_f = st.number_input("Email Vol FLS", value=4595) * (1 + growth)
         a_e_f = st.number_input("Email AHT FLS (sec)", value=3215)
-        
         wl_fls = ((v_c_f * a_c_f) / 3600 / f_c) + ((v_e_f * a_e_f) / 3600 / f_c)
         hc_fls = math.ceil(wl_fls / hrs_eff) if hrs_eff > 0 else 0
         st.metric("FLS Headcount", hc_fls)
@@ -69,83 +65,70 @@ with tab_calc:
         a_c_s = st.number_input("Chat AHT SLS (sec)", value=7324)
         v_e_s = st.number_input("Email Vol SLS", value=361) * (1 + growth)
         a_e_s = st.number_input("Email AHT SLS (sec)", value=9927)
-        
         wl_sls = ((v_c_s * a_c_s) / 3600 / s_c) + ((v_e_s * a_e_s) / 3600 / s_c)
         hc_sls = math.ceil(wl_sls / hrs_eff) if hrs_eff > 0 else 0
         st.metric("SLS Headcount", hc_sls)
 
     total_vol = (v_c_f + v_e_f + v_c_s + v_e_s)
     total_hc = hc_fls + hc_sls
-    
-    summary_placeholder.markdown(f"""
-    - **Working Days:** {work_days}
-    - **Capacity/Agent:** {hrs_eff:.1f} hrs
-    - **Total Volume:** {total_vol:,.0f}
-    - **Total Headcount:** {total_hc} Agents
-    """)
+    summary_placeholder.markdown(f"- **Working Days:** {work_days}\n- **Capacity/Agent:** {hrs_eff:.1f} hrs\n- **Total Vol:** {total_vol:,.0f}\n- **Total HC:** {total_hc} Agents")
 
 with tab_bulk:
     st.header("Bulk Input Mode")
-    st.info("Paste your data below as tab-separated or comma-separated values from Excel.")
+    st.warning("Paste data WITHOUT headers. Ensure the column order matches exactly.")
     
-    # Modificación 2: Dos inputs separados para Volumen y AHT
     col_v, col_a = st.columns(2)
-    
     with col_v:
         st.subheader("1. Volume Data")
-        vol_input = st.text_area("Month, eVisa Email, eVisa Chat, eVisa SLS Chat, eVisa SLS Email", height=200, 
-                                 help="Format: Month, Email, Chat, SLS_Chat, SLS_Email")
+        st.caption("Order: Date, Email, Chat, SLS Chat, SLS Email")
+        vol_input = st.text_area("Paste Volume here", height=250)
         
     with col_a:
-        st.subheader("2. AHT Data (seconds)")
-        aht_input = st.text_area("Month, eVisa SLS Email, eVisa SLS Chat, eVisa Chat, eVisa Email", height=200,
-                                 help="Note the order: SLS Email, SLS Chat, Chat, Email")
-
-    # Input para el año de referencia del bulk
-    bulk_year = st.number_input("Reference Year for Bulk Calculation", value=2025)
+        st.subheader("2. AHT Data (sec)")
+        st.caption("Order: Date, SLS Email, SLS Chat, Chat, Email")
+        aht_input = st.text_area("Paste AHT here", height=250)
 
     if st.button("Calculate Bulk Staffing"):
-        try:
-            # Procesar Volumen - Usamos read_csv con delimitador flexible (coma o espacio)
-            df_vol = pd.read_csv(StringIO(vol_input), sep=None, engine='python')
-            df_vol.columns = ['Month', 'v_email', 'v_chat', 'v_sls_chat', 'v_sls_email']
-            
-            # Procesar AHT
-            df_aht = pd.read_csv(StringIO(aht_input), sep=None, engine='python')
-            df_aht.columns = ['Month', 'a_sls_email', 'a_sls_chat', 'a_chat', 'a_email']
-            
-            # Unir tablas por Mes
-            df_final = pd.merge(df_vol, df_aht, on='Month')
-            
-            results = []
-            for _, row in df_final.iterrows():
-                m_name = str(row['Month']).strip()
-                if m_name not in month_map: continue
+        if vol_input and aht_input:
+            try:
+                # Procesar Vol: Date, Email, Chat, SLS Chat, SLS Email
+                df_vol = pd.read_csv(StringIO(vol_input), header=None, names=['Date', 'v_email', 'v_chat', 'v_sls_chat', 'v_sls_email'])
                 
-                m_num = month_map[m_name]
-                d_lab = get_working_days(bulk_year, m_num)
-                cap = (d_lab * hrs_shift) * (1 - shrinkage)
+                # Procesar AHT: Date, SLS Email, SLS Chat, Chat, Email
+                df_aht = pd.read_csv(StringIO(aht_input), header=None, names=['Date', 'a_sls_email', 'a_sls_chat', 'a_chat', 'a_email'])
                 
-                # Cálculos con Crecimiento aplicado
-                # FLS
-                wl_fls_b = (((row['v_email'] * (1+growth)) * row['a_email']) / 3600 / f_c) + \
-                           (((row['v_chat'] * (1+growth)) * row['a_chat']) / 3600 / f_c)
-                # SLS
-                wl_sls_b = (((row['v_sls_email'] * (1+growth)) * row['a_sls_email']) / 3600 / s_c) + \
-                           (((row['v_sls_chat'] * (1+growth)) * row['a_sls_chat']) / 3600 / s_c)
+                # Unir por fecha
+                df_final = pd.merge(df_vol, df_aht, on='Date')
                 
-                hc_f = math.ceil(wl_fls_b / cap) if cap > 0 else 0
-                hc_s = math.ceil(wl_sls_b / cap) if cap > 0 else 0
+                results = []
+                for _, row in df_final.iterrows():
+                    dt = pd.to_datetime(row['Date'])
+                    m_num = dt.month
+                    y_val = dt.year
+                    
+                    d_lab = get_working_days(y_val, m_num)
+                    cap = (d_lab * hrs_shift) * (1 - shrinkage)
+                    
+                    # FLS Calculation
+                    wl_f = (((row['v_email']*(1+growth))*row['a_email'])/3600/f_c) + (((row['v_chat']*(1+growth))*row['a_chat'])/3600/f_c)
+                    # SLS Calculation
+                    wl_s = (((row['v_sls_email']*(1+growth))*row['a_sls_email'])/3600/s_c) + (((row['v_sls_chat']*(1+growth))*row['a_sls_chat'])/3600/s_c)
+                    
+                    hc_f = math.ceil(wl_f / cap) if cap > 0 else 0
+                    hc_s = math.ceil(wl_s / cap) if cap > 0 else 0
+                    
+                    results.append({
+                        "Date": row['Date'],
+                        "Work Days": d_lab,
+                        "FLS Agents": hc_f,
+                        "SLS Agents": hc_s,
+                        "Total Agents": hc_f + hc_s
+                    })
                 
-                results.append({
-                    "Month": m_name,
-                    "Work Days": d_lab,
-                    "FLS Agents": hc_f,
-                    "SLS Agents": hc_s,
-                    "Total Agents": hc_f + hc_s
-                })
-            
-            st.table(pd.DataFrame(results))
-            
-        except Exception as e:
-            st.error(f"Error: {e}. Please check the format. Ensure headers are NOT included or match exactly.")
+                st.success("Calculations complete!")
+                st.table(pd.DataFrame(results))
+                
+            except Exception as e:
+                st.error(f"Error processing data: {e}")
+        else:
+            st.error("Please paste data into both fields.")
