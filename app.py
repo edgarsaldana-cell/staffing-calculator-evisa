@@ -1,13 +1,13 @@
 import streamlit as st
 import math
 import pandas as pd
+from io import StringIO
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Workforce Management Tool", layout="wide")
 
 # --- HELPER FUNCTIONS ---
 def get_working_days(year, month):
-    # Calculate business days (Mon-Fri) using pandas
     start = pd.Timestamp(year, month, 1)
     end = start + pd.offsets.MonthEnd(0)
     return len(pd.bdate_range(start, end))
@@ -32,17 +32,19 @@ with tab_calc:
     
     work_days = get_working_days(selected_year, month_map[selected_month_name])
     
-    shrinkage = st.sidebar.slider("Shrinkage (%)", 0, 50, 10) / 100
-    growth = st.sidebar.slider("Growth Factor (%)", 0, 100, 0) / 100
-    hrs_shift = st.sidebar.number_input("Hours per Shift", value=8)
+    # Modificación 1: Inputs numéricos para Shrinkage y Growth
+    shrinkage_input = st.sidebar.number_input("Shrinkage (%)", min_value=0.0, max_value=100.0, value=10.0)
+    shrinkage = shrinkage_input / 100
+    
+    growth_input = st.sidebar.number_input("Growth Factor (%)", min_value=0.0, max_value=100.0, value=0.0)
+    growth = growth_input / 100
+    
+    hrs_shift = st.sidebar.number_input("Hours per Shift", value=8.0)
 
-    # Agent Capacity Calculation
     hrs_eff = (work_days * hrs_shift) * (1 - shrinkage)
     
     st.sidebar.divider()
     st.sidebar.subheader("📈 Monthly Summary")
-    
-    # Placeholders for dynamic summary
     summary_placeholder = st.sidebar.empty()
 
     # --- INPUTS ---
@@ -72,7 +74,6 @@ with tab_calc:
         hc_sls = math.ceil(wl_sls / hrs_eff) if hrs_eff > 0 else 0
         st.metric("SLS Headcount", hc_sls)
 
-    # --- UPDATE SIDEBAR SUMMARY ---
     total_vol = (v_c_f + v_e_f + v_c_s + v_e_s)
     total_hc = hc_fls + hc_sls
     
@@ -85,45 +86,66 @@ with tab_calc:
 
 with tab_bulk:
     st.header("Bulk Input Mode")
-    st.write("Enter monthly data below to calculate multiple periods at once.")
+    st.info("Paste your data below as tab-separated or comma-separated values from Excel.")
     
-    # Sample data format for the user
-    example_csv = "Month, Year, Chat Vol, Chat AHT, Email Vol, Email AHT\nDecember, 2025, 11691, 3731, 4595, 3215"
-    bulk_input = st.text_area("Paste your data (CSV format)", example_csv, height=200)
+    # Modificación 2: Dos inputs separados para Volumen y AHT
+    col_v, col_a = st.columns(2)
     
+    with col_v:
+        st.subheader("1. Volume Data")
+        vol_input = st.text_area("Month, eVisa Email, eVisa Chat, eVisa SLS Chat, eVisa SLS Email", height=200, 
+                                 help="Format: Month, Email, Chat, SLS_Chat, SLS_Email")
+        
+    with col_a:
+        st.subheader("2. AHT Data (seconds)")
+        aht_input = st.text_area("Month, eVisa SLS Email, eVisa SLS Chat, eVisa Chat, eVisa Email", height=200,
+                                 help="Note the order: SLS Email, SLS Chat, Chat, Email")
+
+    # Input para el año de referencia del bulk
+    bulk_year = st.number_input("Reference Year for Bulk Calculation", value=2025)
+
     if st.button("Calculate Bulk Staffing"):
         try:
-            from io import StringIO
-            df_bulk = pd.read_csv(StringIO(bulk_input))
+            # Procesar Volumen - Usamos read_csv con delimitador flexible (coma o espacio)
+            df_vol = pd.read_csv(StringIO(vol_input), sep=None, engine='python')
+            df_vol.columns = ['Month', 'v_email', 'v_chat', 'v_sls_chat', 'v_sls_email']
             
-            # Clean column names
-            df_bulk.columns = df_bulk.columns.str.strip()
+            # Procesar AHT
+            df_aht = pd.read_csv(StringIO(aht_input), sep=None, engine='python')
+            df_aht.columns = ['Month', 'a_sls_email', 'a_sls_chat', 'a_chat', 'a_email']
+            
+            # Unir tablas por Mes
+            df_final = pd.merge(df_vol, df_aht, on='Month')
             
             results = []
-            for _, row in df_bulk.iterrows():
-                m_name = row['Month'].strip()
-                y_val = int(row['Year'])
+            for _, row in df_final.iterrows():
+                m_name = str(row['Month']).strip()
+                if m_name not in month_map: continue
+                
                 m_num = month_map[m_name]
-                
-                # Apply growth
-                v_c = row['Chat Vol'] * (1 + growth)
-                v_e = row['Email Vol'] * (1 + growth)
-                
-                d_lab = get_working_days(y_val, m_num)
+                d_lab = get_working_days(bulk_year, m_num)
                 cap = (d_lab * hrs_shift) * (1 - shrinkage)
                 
-                # Using a generic average concurrency of 1.75 for bulk preview
-                wl = ((v_c * row['Chat AHT']) / 3600 / 1.75) + ((v_e * row['Email AHT']) / 3600 / 1.75)
-                hc = math.ceil(wl / cap) if cap > 0 else 0
+                # Cálculos con Crecimiento aplicado
+                # FLS
+                wl_fls_b = (((row['v_email'] * (1+growth)) * row['a_email']) / 3600 / f_c) + \
+                           (((row['v_chat'] * (1+growth)) * row['a_chat']) / 3600 / f_c)
+                # SLS
+                wl_sls_b = (((row['v_sls_email'] * (1+growth)) * row['a_sls_email']) / 3600 / s_c) + \
+                           (((row['v_sls_chat'] * (1+growth)) * row['a_sls_chat']) / 3600 / s_c)
+                
+                hc_f = math.ceil(wl_fls_b / cap) if cap > 0 else 0
+                hc_s = math.ceil(wl_sls_b / cap) if cap > 0 else 0
                 
                 results.append({
                     "Month": m_name,
-                    "Year": y_val,
-                    "Total Vol (with Growth)": round(v_c + v_e),
                     "Work Days": d_lab,
-                    "Required Headcount": hc
+                    "FLS Agents": hc_f,
+                    "SLS Agents": hc_s,
+                    "Total Agents": hc_f + hc_s
                 })
             
             st.table(pd.DataFrame(results))
+            
         except Exception as e:
-            st.error(f"Error processing data: {e}. Please ensure the format matches the example.")
+            st.error(f"Error: {e}. Please check the format. Ensure headers are NOT included or match exactly.")
