@@ -97,8 +97,8 @@ with tab_bulk:
             st.session_state['bulk_data'] = bulk_res
             st.table(bulk_res)
             st.divider()
-            c1, c2, c3 = st.columns(3)
             df_br = pd.DataFrame(bulk_res)
+            c1, c2, c3 = st.columns(3)
             c1.metric("Total Cumulative Vol", f"{df_br['TOTAL VOL'].sum():,}")
             c2.metric("Peak FLS Headcount", df_br['FLS HC'].max())
             c3.metric("Peak SLS Headcount", df_br['SLS HC'].max())
@@ -106,7 +106,9 @@ with tab_bulk:
 # --- TAB 3: MICRO ---
 with tab_micro:
     st.header("Schedule Optimizer & 24/7 Roster")
-    if 'bulk_data' not in st.session_state: st.warning("Run Bulk tab first."); st.stop()
+    if 'bulk_data' not in st.session_state:
+        st.warning("Please run 'Calculate Bulk' in the Multi-Month tab first.")
+        st.stop()
     
     with st.expander("Target Simulation"):
         c1, c2, c3 = st.columns(3)
@@ -126,11 +128,10 @@ with tab_micro:
         
         if month_info:
             df_raw['Hour'] = df_raw[time_col].dt.hour
-            df_raw['Day'] = df_raw[time_col].dt.day_name()
             fls_raw = df_raw[~df_raw[team_col].str.contains('SLS', na=False)]
             sls_raw = df_raw[df_raw[team_col].str.contains('SLS', na=False)]
             
-            mesh = []
+            mesh_data = []
             aht_f_act_m = month_info['AHT FLS (Avg)'] / 60
             aht_s_act_m = month_info['AHT SLS (Avg)'] / 60
             
@@ -142,15 +143,16 @@ with tab_micro:
                 hc_s_act = math.ceil(((vs * aht_s_act_m * 60)/3600/s_c)/(1-(shrinkage_input/100)))
                 hc_s_tar = math.ceil(((vs * aht_s_target * 60)/3600/s_c)/(1-(shrinkage_input/100)))
                 
-                mesh.append({
-                    "Hour": f"{h:02d}:00", "Vol FLS": int(vf), "AHT FLS Act (min)": round(aht_f_act_m,1), "HC FLS (Act)": hc_f_act, "AHT FLS Tar (min)": aht_f_target, "HC FLS (Tar)": hc_f_tar,
-                    "Vol SLS": int(vs), "AHT SLS Act (min)": round(aht_s_act_m,1), "HC SLS (Act)": hc_s_act, "AHT SLS Tar (min)": aht_s_target, "HC SLS (Tar)": hc_s_tar, "Total HC Interval": hc_f_act + hc_s_act
+                mesh_data.append({
+                    "Hour": f"{h:02d}:00", "Vol FLS": int(vf), "HC FLS (Act)": hc_f_act, "HC FLS (Tar)": hc_f_tar,
+                    "Vol SLS": int(vs), "HC SLS (Act)": hc_s_act, "HC SLS (Tar)": hc_s_tar, "Total HC": hc_f_act + hc_s_act
                 })
-            st.table(mesh)
+            df_mesh = pd.DataFrame(mesh_data)
+            st.table(df_mesh)
 
             st.divider()
             total_hc = month_info['Total HC']
-            st.subheader(f"Suggested Monthly Roster (Total Headcount: {total_hc})")
+            st.subheader(f"Suggested Monthly Roster (Headcount: {total_hc})")
             
             days_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
             roster = []
@@ -176,15 +178,14 @@ with tab_micro:
                         else: agent_row[d] = f"Work (Lunch @ {lunch_h:02d}:00)"
                 roster.append(agent_row)
             
-            st.write("Shift Grouping Summary")
             df_groups = pd.DataFrame([{"Shift": k, "Agents": v} for k, v in shift_groups.items()])
+            st.write("Shift Grouping Summary")
             st.table(df_groups)
             
-            st.write("Individual Roster")
             df_roster = pd.DataFrame(roster)
+            st.write("Individual Roster")
             st.table(df_roster)
 
             # Botón de Descarga
-            df_mesh = pd.DataFrame(mesh)
             excel_data = to_excel([df_mesh, df_groups, df_roster], ["Hourly Analysis", "Shift Groups", "Roster"])
-            st.download_button(label="Download Roster to Excel", data=excel_data, file_name=f"Roster_{current_month}.xlsx", mime="application/vnd.ms-excel")
+            st.download_button(label="Download Roster to Excel", data=excel_data, file_name=f"Roster_{current_month}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
