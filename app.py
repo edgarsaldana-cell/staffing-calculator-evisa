@@ -21,7 +21,6 @@ def to_excel(df_list, sheet_names):
     return output.getvalue()
 
 def style_levels(styler):
-    # FLS: Texto Azul, SLS: Texto Verde
     styler.set_properties(subset=[col for col in styler.columns if 'FLS' in col], 
                          **{'color': '#0056b3', 'font-weight': 'bold'})
     styler.set_properties(subset=[col for col in styler.columns if 'SLS' in col], 
@@ -56,7 +55,7 @@ st.sidebar.subheader("Target Concurrency")
 f_c = st.sidebar.number_input("FLS Concurrency", value=2.0)
 s_c = st.sidebar.number_input("SLS Concurrency", value=1.5)
 
-# --- TAB 1: MACRO ---
+# --- TAB 1 & 2 ---
 with tab_calc:
     work_days = get_working_days(selected_year, month_map[selected_month_name])
     hrs_eff = (work_days * hrs_shift) * (1 - (shrinkage_input/100))
@@ -80,7 +79,6 @@ with tab_calc:
         hc_sls = math.ceil(wl_sls / hrs_eff) if hrs_eff > 0 else 0
         st.metric("SLS Headcount", hc_sls)
 
-# --- TAB 2: BULK ---
 with tab_bulk:
     st.header("Bulk Multi-Month Analysis")
     cv, ca = st.columns(2)
@@ -96,24 +94,15 @@ with tab_bulk:
                 dt = pd.to_datetime(r['Date'])
                 d_l = get_working_days(dt.year, dt.month)
                 cp = (d_l * hrs_shift) * (1 - (shrinkage_input/100))
-                wl_f = ((r['v_em_f']*(1+(growth_input/100))*r['a_em_f'])/3600/f_c) + ((r['v_ch_f']*(1+(growth_input/100))*r['a_ch_f'])/3600/f_c)
                 v_f_total = (r['v_em_f'] + r['v_ch_f']) * (1+(growth_input/100))
-                hc_f = min(math.ceil(v_f_total), math.ceil(wl_f/cp)) if v_f_total > 0 else 0
-                wl_s = ((r['v_em_s']*(1+(growth_input/100))*r['a_em_s'])/3600/s_c) + ((r['v_ch_s']*(1+(growth_input/100))*r['a_ch_s'])/3600/s_c)
                 v_s_total = (r['v_ch_s'] + r['v_em_s']) * (1+(growth_input/100))
+                wl_f = ((r['v_em_f']*(1+(growth_input/100))*r['a_em_f'])/3600/f_c) + ((r['v_ch_f']*(1+(growth_input/100))*r['a_ch_f'])/3600/f_c)
+                wl_s = ((r['v_em_s']*(1+(growth_input/100))*r['a_em_s'])/3600/s_c) + ((r['v_ch_s']*(1+(growth_input/100))*r['a_ch_s'])/3600/s_c)
+                hc_f = min(math.ceil(v_f_total), math.ceil(wl_f/cp)) if v_f_total > 0 else 0
                 hc_s = min(math.ceil(v_s_total), math.ceil(wl_s/cp)) if v_s_total > 0 else 0
-                bulk_res.append({
-                    "Month": dt.strftime('%B %Y'), 
-                    "Vol Email FLS": int(r['v_em_f']), "AHT Email FLS": int(r['a_em_f']),
-                    "Vol Chat FLS": int(r['v_ch_f']), "AHT Chat FLS": int(r['a_ch_f']),
-                    "Vol Email SLS": int(r['v_em_s']), "AHT Email SLS": int(r['a_em_s']),
-                    "Vol Chat SLS": int(r['v_ch_s']), "AHT Chat SLS": int(r['a_ch_s']),
-                    "TOTAL VOL": int(v_f_total + v_s_total),
-                    "FLS HC": hc_f, "SLS HC": hc_s, "Total HC": hc_f + hc_s
-                })
+                bulk_res.append({"Month": dt.strftime('%B %Y'), "Vol Email FLS": int(r['v_em_f']), "AHT Email FLS": int(r['a_em_f']), "Vol Chat FLS": int(r['v_ch_f']), "AHT Chat FLS": int(r['a_ch_f']), "Vol Email SLS": int(r['v_em_s']), "AHT Email SLS": int(r['a_em_s']), "Vol Chat SLS": int(r['v_ch_s']), "AHT Chat SLS": int(r['a_ch_s']), "TOTAL VOL": int(v_f_total + v_s_total), "FLS HC": hc_f, "SLS HC": hc_s, "Total HC": hc_f + hc_s})
             st.session_state['bulk_data'] = bulk_res
             st.table(pd.DataFrame(bulk_res).style.pipe(style_levels))
-            # Resumen restaurado
             df_br = pd.DataFrame(bulk_res)
             st.divider()
             c1, c2, c3 = st.columns(3)
@@ -146,74 +135,57 @@ with tab_micro:
         
         if m_info:
             df_raw['Hour'] = df_raw[time_col].dt.hour
-            fls_raw = df_raw[~df_raw[team_col].str.contains('SLS', na=False)]
-            sls_raw = df_raw[df_raw[team_col].str.contains('SLS', na=False)]
-            
-            # Proporciones basadas en el bulk para granularidad por hora
-            total_v_f_bulk = m_info['Vol Email FLS'] + m_info['Vol Chat FLS']
-            p_e_f = m_info['Vol Email FLS'] / total_v_f_bulk if total_v_f_bulk > 0 else 0.5
-            total_v_s_bulk = m_info['Vol Email SLS'] + m_info['Vol Chat SLS']
-            p_e_s = m_info['Vol Email SLS'] / total_v_s_bulk if total_v_s_bulk > 0 else 0.5
+            fls_raw = df_raw[~df_raw[team_col].str.contains('SLS', na=False)]; sls_raw = df_raw[df_raw[team_col].str.contains('SLS', na=False)]
+            total_v_f_b = m_info['Vol Email FLS'] + m_info['Vol Chat FLS']
+            p_e_f = m_info['Vol Email FLS'] / total_v_f_b if total_v_f_b > 0 else 0.5
+            total_v_s_b = m_info['Vol Email SLS'] + m_info['Vol Chat SLS']
+            p_e_s = m_info['Vol Email SLS'] / total_v_s_b if total_v_s_b > 0 else 0.5
 
             mesh = []
             for h in range(24):
-                v_f = len(fls_raw[fls_raw['Hour'] == h]) / num_days
-                v_s = len(sls_raw[sls_raw['Hour'] == h]) / num_days
-                
-                # Desglose FLS
-                v_f_e, v_f_c = v_f * p_e_f, v_f * (1-p_e_f)
-                wl_f_act = ((v_f_e * m_info['AHT Email FLS'] + v_f_c * m_info['AHT Chat FLS'])/3600/f_c)/(1-(shrinkage_input/100))
-                hc_f_act = min(math.ceil(v_f), math.ceil(wl_f_act)) if v_f > 0 else 0
-                wl_f_tar = ((v_f_e * a_f_e_tar*60 + v_f_c * a_f_c_tar*60)/3600/f_c)/(1-(shrinkage_input/100))
-                hc_f_tar = min(math.ceil(v_f), math.ceil(wl_f_tar)) if v_f > 0 else 0
-                
-                # Desglose SLS
-                v_s_e, v_s_c = v_s * p_e_s, v_s * (1-p_e_s)
-                wl_s_act = ((v_s_e * m_info['AHT Email SLS'] + v_s_c * m_info['AHT Chat SLS'])/3600/s_c)/(1-(shrinkage_input/100))
-                hc_s_act = min(math.ceil(v_s), math.ceil(wl_s_act)) if v_s > 0 else 0
-                wl_s_tar = ((v_s_e * a_s_e_tar*60 + v_s_c * a_s_c_tar*60)/3600/s_c)/(1-(shrinkage_input/100))
-                hc_s_tar = min(math.ceil(v_s), math.ceil(wl_s_tar)) if v_s > 0 else 0
+                v_f = len(fls_raw[fls_raw['Hour'] == h]) / num_days; v_s = len(sls_raw[sls_raw['Hour'] == h]) / num_days
+                v_fe, v_fc = v_f * p_e_f, v_f * (1-p_e_f)
+                v_se, v_sc = v_s * p_e_s, v_s * (1-p_e_s)
+                hc_f_act = min(math.ceil(v_f), math.ceil(((v_fe * m_info['AHT Email FLS'] + v_fc * m_info['AHT Chat FLS'])/3600/f_c)/(1-(shrinkage_input/100)))) if v_f > 0 else 0
+                hc_f_tar = min(math.ceil(v_f), math.ceil(((v_fe * a_f_e_tar*60 + v_fc * a_f_c_tar*60)/3600/f_c)/(1-(shrinkage_input/100)))) if v_f > 0 else 0
+                hc_s_act = min(math.ceil(v_s), math.ceil(((v_se * m_info['AHT Email SLS'] + v_sc * m_info['AHT Chat SLS'])/3600/s_c)/(1-(shrinkage_input/100)))) if v_s > 0 else 0
+                hc_s_tar = min(math.ceil(v_s), math.ceil(((v_se * a_s_e_tar*60 + v_sc * a_s_c_tar*60)/3600/s_c)/(1-(shrinkage_input/100)))) if v_s > 0 else 0
 
                 mesh.append({
                     "Hour": f"{h:02d}:00",
-                    "Vol Email FLS": round(v_f_e, 1), "AHT Email FLS": int(m_info['AHT Email FLS']),
-                    "Vol Chat FLS": round(v_f_c, 1), "AHT Chat FLS": int(m_info['AHT Chat FLS']),
+                    "Vol Email FLS": int(round(v_fe)), "AHT Email FLS (min)": int(m_info['AHT Email FLS']/60),
+                    "Vol Chat FLS": int(round(v_fc)), "AHT Chat FLS (min)": int(m_info['AHT Chat FLS']/60),
                     "HC FLS (Act)": hc_f_act, "HC FLS (Tar)": hc_f_tar,
-                    "Vol Email SLS": round(v_s_e, 1), "AHT Email SLS": int(m_info['AHT Email SLS']),
-                    "Vol Chat SLS": round(v_s_c, 1), "AHT Chat SLS": int(m_info['AHT Chat SLS']),
-                    "HC SLS (Act)": hc_s_act, "HC SLS (Tar)": hc_s_tar,
-                    "Total HC Target": hc_f_tar + hc_s_tar
+                    "Vol Email SLS": int(round(v_se)), "AHT Email SLS (min)": int(m_info['AHT Email SLS']/60),
+                    "Vol Chat SLS": int(round(v_sc)), "AHT Chat SLS (min)": int(m_info['AHT Chat SLS']/60),
+                    "HC SLS (Act)": hc_s_act, "HC SLS (Tar)": hc_s_tar, "Total HC Target": hc_f_tar + hc_s_tar
                 })
             
             st.subheader("Hourly Distribution (Detailed)")
             df_mesh = pd.DataFrame(mesh)
             st.table(df_mesh.style.pipe(style_levels))
 
+            st.subheader("Interval Performance Graphic")
+            st.line_chart(df_mesh.set_index('Hour')[['Vol Email FLS', 'Vol Chat FLS', 'Vol Email SLS', 'Vol Chat SLS', 'HC FLS (Act)', 'HC SLS (Act)']])
+
             st.divider()
-            total_hc_assigned = m_info['Total HC']
-            st.subheader(f"Suggested Monthly Roster (Headcount: {total_hc_assigned})")
+            st.subheader(f"Shift Grouping Summary (Total HC: {m_info['Total HC']})")
             days_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-            roster = []
+            roster = []; shift_groups = {}
             for i in range(1, m_info['FLS HC'] + 1):
-                start_h = (i % 24); end_h = (start_h + 9) % 24
-                off1 = days_order[(i % 7)]; off2 = days_order[((i + 1) % 7)]
-                row = {"Agent": f"Agent FLS {i:02d}", "Level": "FLS", "Shift": f"{start_h:02d}:00-{end_h:02d}:00"}
-                for d in days_order:
-                    if d in [off1, off2]: row[d] = "OFF"
-                    else: row[d] = f"Work (Lunch @ {(start_h+4)%24:02d}:00)"
+                sh = (i % 24); shift = f"{sh:02d}:00-{(sh+9)%24:02d}:00"; shift_groups[shift] = shift_groups.get(shift, 0) + 1
+                row = {"Agent": f"Agent FLS {i:02d}", "Level": "FLS", "Shift": shift}
+                for d in days_order: row[d] = "OFF" if d in [days_order[i%7], days_order[(i+1)%7]] else f"Work (Lunch@{(sh+4)%24:02d}:00)"
                 roster.append(row)
             for i in range(1, m_info['SLS HC'] + 1):
-                start_h = (i % 24); end_h = (start_h + 9) % 24
-                off1 = days_order[(i % 7)]; off2 = days_order[((i + 1) % 7)]
-                row = {"Agent": f"Agent SLS {i:02d}", "Level": "SLS", "Shift": f"{start_h:02d}:00-{end_h:02d}:00"}
-                for d in days_order:
-                    if d in [off1, off2]: row[d] = "OFF"
-                    else: row[d] = f"Work (Lunch @ {(start_h+4)%24:02d}:00)"
+                sh = (i % 24); shift = f"{sh:02d}:00-{(sh+9)%24:02d}:00"; shift_groups[shift] = shift_groups.get(shift, 0) + 1
+                row = {"Agent": f"Agent SLS {i:02d}", "Level": "SLS", "Shift": shift}
+                for d in days_order: row[d] = "OFF" if d in [days_order[i%7], days_order[(i+1)%7]] else f"Work (Lunch@{(sh+4)%24:02d}:00)"
                 roster.append(row)
             
-            df_roster = pd.DataFrame(roster)
-            st.table(df_roster.style.pipe(style_levels))
+            st.table(pd.DataFrame([{"Shift": k, "Agents": v} for k, v in shift_groups.items()]))
+            st.subheader("Individual Agent Roster")
+            st.table(pd.DataFrame(roster).style.pipe(style_levels))
             
-            # Botón de descarga al final del Roster
-            excel_data = to_excel([df_mesh, df_roster], ["Hourly Analysis", "Roster"])
+            excel_data = to_excel([df_mesh, pd.DataFrame(roster)], ["Analysis", "Roster"])
             st.download_button(label="Download Roster to Excel", data=excel_data, file_name=f"WFM_Roster_{current_month}.xlsx")
