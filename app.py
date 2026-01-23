@@ -2,28 +2,8 @@ import streamlit as st
 import math
 import pandas as pd
 
-# --- PAGE CONFIG & CUSTOM STYLES ---
+# --- PAGE CONFIG ---
 st.set_page_config(page_title="Workforce Management Tool", layout="wide")
-
-# Custom CSS for Company Colors - Fixed Syntax
-st.markdown("""
-    <style>
-    .stApp {
-        background-color: #ecfbff;
-    }
-    h1, h2, h3, p, span, label, .stMetric, .stMarkdown {
-        color: #0b3947 !important;
-    }
-    .stNumberInput input, .stSelectbox div {
-        background-color: #ffffff !important;
-        color: #0b3947 !important;
-    }
-    /* Style for tabs */
-    .stTabs [data-baseweb="tab-list"] button [data-testid="stMarkdownContainer"] p {
-        color: #0b3947 !important;
-    }
-    </style>
-    """, unsafe_allow_html=True)
 
 # --- HELPER FUNCTIONS ---
 def get_working_days(year, month):
@@ -94,4 +74,56 @@ with tab_calc:
 
     # --- UPDATE SIDEBAR SUMMARY ---
     total_vol = (v_c_f + v_e_f + v_c_s + v_e_s)
-    total_hc = hc_fls + hc
+    total_hc = hc_fls + hc_sls
+    
+    summary_placeholder.markdown(f"""
+    - **Working Days:** {work_days}
+    - **Capacity/Agent:** {hrs_eff:.1f} hrs
+    - **Total Volume:** {total_vol:,.0f}
+    - **Total Headcount:** {total_hc} Agents
+    """)
+
+with tab_bulk:
+    st.header("Bulk Input Mode")
+    st.write("Enter monthly data below to calculate multiple periods at once.")
+    
+    # Sample data format for the user
+    example_csv = "Month, Year, Chat Vol, Chat AHT, Email Vol, Email AHT\nDecember, 2025, 11691, 3731, 4595, 3215"
+    bulk_input = st.text_area("Paste your data (CSV format)", example_csv, height=200)
+    
+    if st.button("Calculate Bulk Staffing"):
+        try:
+            from io import StringIO
+            df_bulk = pd.read_csv(StringIO(bulk_input))
+            
+            # Clean column names
+            df_bulk.columns = df_bulk.columns.str.strip()
+            
+            results = []
+            for _, row in df_bulk.iterrows():
+                m_name = row['Month'].strip()
+                y_val = int(row['Year'])
+                m_num = month_map[m_name]
+                
+                # Apply growth
+                v_c = row['Chat Vol'] * (1 + growth)
+                v_e = row['Email Vol'] * (1 + growth)
+                
+                d_lab = get_working_days(y_val, m_num)
+                cap = (d_lab * hrs_shift) * (1 - shrinkage)
+                
+                # Using a generic average concurrency of 1.75 for bulk preview
+                wl = ((v_c * row['Chat AHT']) / 3600 / 1.75) + ((v_e * row['Email AHT']) / 3600 / 1.75)
+                hc = math.ceil(wl / cap) if cap > 0 else 0
+                
+                results.append({
+                    "Month": m_name,
+                    "Year": y_val,
+                    "Total Vol (with Growth)": round(v_c + v_e),
+                    "Work Days": d_lab,
+                    "Required Headcount": hc
+                })
+            
+            st.table(pd.DataFrame(results))
+        except Exception as e:
+            st.error(f"Error processing data: {e}. Please ensure the format matches the example.")
