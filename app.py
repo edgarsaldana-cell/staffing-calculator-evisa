@@ -75,60 +75,79 @@ with tab_calc:
 
 with tab_bulk:
     st.header("Bulk Input Mode")
-    st.warning("Paste data WITHOUT headers. Ensure the column order matches exactly.")
+    st.warning("Paste data WITHOUT headers. Order: Volume (Date, Email, Chat, SLS Chat, SLS Email) | AHT (Date, SLS Email, SLS Chat, Chat, Email)")
     
     col_v, col_a = st.columns(2)
     with col_v:
         st.subheader("1. Volume Data")
-        st.caption("Order: Date, Email, Chat, SLS Chat, SLS Email")
-        vol_input = st.text_area("Paste Volume here", height=250)
-        
+        vol_input = st.text_area("Paste Volume here", height=200)
     with col_a:
         st.subheader("2. AHT Data (sec)")
-        st.caption("Order: Date, SLS Email, SLS Chat, Chat, Email")
-        aht_input = st.text_area("Paste AHT here", height=250)
+        a_input = st.text_area("Paste AHT here", height=200)
 
     if st.button("Calculate Bulk Staffing"):
-        if vol_input and aht_input:
+        if vol_input and a_input:
             try:
-                # Procesar Vol: Date, Email, Chat, SLS Chat, SLS Email
-                df_vol = pd.read_csv(StringIO(vol_input), header=None, names=['Date', 'v_email', 'v_chat', 'v_sls_chat', 'v_sls_email'])
-                
-                # Procesar AHT: Date, SLS Email, SLS Chat, Chat, Email
-                df_aht = pd.read_csv(StringIO(aht_input), header=None, names=['Date', 'a_sls_email', 'a_sls_chat', 'a_chat', 'a_email'])
-                
-                # Unir por fecha
-                df_final = pd.merge(df_vol, df_aht, on='Date')
+                df_vol = pd.read_csv(StringIO(vol_input), header=None, names=['Date', 'v_em', 'v_ch', 'v_sch', 'v_sem'])
+                df_aht = pd.read_csv(StringIO(a_input), header=None, names=['Date', 'a_sem', 'a_sch', 'a_ch', 'a_em'])
+                df_f = pd.merge(df_vol, df_aht, on='Date')
                 
                 results = []
-                for _, row in df_final.iterrows():
-                    dt = pd.to_datetime(row['Date'])
-                    m_num = dt.month
-                    y_val = dt.year
-                    
-                    d_lab = get_working_days(y_val, m_num)
+                for _, r in df_f.iterrows():
+                    dt = pd.to_datetime(r['Date'])
+                    month_year = dt.strftime('%B %Y')
+                    d_lab = get_working_days(dt.year, dt.month)
                     cap = (d_lab * hrs_shift) * (1 - shrinkage)
                     
-                    # FLS Calculation
-                    wl_f = (((row['v_email']*(1+growth))*row['a_email'])/3600/f_c) + (((row['v_chat']*(1+growth))*row['a_chat'])/3600/f_c)
-                    # SLS Calculation
-                    wl_s = (((row['v_sls_email']*(1+growth))*row['a_sls_email'])/3600/s_c) + (((row['v_sls_chat']*(1+growth))*row['a_sls_chat'])/3600/s_c)
+                    # Totales con Growth
+                    v_fls = (r['v_em'] + r['v_ch']) * (1+growth)
+                    v_sls = (r['v_sch'] + r['v_sem']) * (1+growth)
+                    a_fls = (r['a_em'] + r['a_ch']) / 2
+                    a_sls = (r['a_sem'] + r['a_sch']) / 2
+                    
+                    wl_f = (((r['v_em']*(1+growth))*r['a_em'])/3600/f_c) + (((r['v_ch']*(1+growth))*r['a_ch'])/3600/f_c)
+                    wl_s = (((r['v_sem']*(1+growth))*r['a_sem'])/3600/s_c) + (((r['v_sch']*(1+growth))*r['a_sch'])/3600/s_c)
                     
                     hc_f = math.ceil(wl_f / cap) if cap > 0 else 0
                     hc_s = math.ceil(wl_s / cap) if cap > 0 else 0
                     
                     results.append({
-                        "Date": row['Date'],
+                        "Month": month_year,
+                        "Vol FLS": int(v_fls),
+                        "Avg AHT FLS": int(a_fls),
+                        "Vol SLS": int(v_sls),
+                        "Avg AHT SLS": int(a_sls),
                         "Work Days": d_lab,
                         "FLS Agents": hc_f,
                         "SLS Agents": hc_s,
                         "Total Agents": hc_f + hc_s
                     })
                 
-                st.success("Calculations complete!")
-                st.table(pd.DataFrame(results))
+                df_res = pd.DataFrame(results)
+                
+                # Crear Fila de Totales
+                totals = pd.Series({
+                    "Month": "TOTAL",
+                    "Vol FLS": df_res["Vol FLS"].sum(),
+                    "Vol SLS": df_res["Vol SLS"].sum(),
+                    "FLS Agents": df_res["FLS Agents"].max(), # Usamos Max o Avg según prefieras
+                    "SLS Agents": df_res["SLS Agents"].max(),
+                    "Total Agents": df_res["Total Agents"].max()
+                })
+                
+                st.success("Analysis Complete")
+                # Mostrar tabla sin índice
+                st.table(df_res.style.format({
+                    "Vol FLS": "{:,}", "Vol SLS": "{:,}", 
+                    "Avg AHT FLS": "{:}s", "Avg AHT SLS": "{:}s"
+                }))
+                
+                # Resumen destacado de totales
+                st.subheader("Summary Totals (Cumulative Volume & Peak Staffing)")
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Total Yearly Volume", f"{df_res['Vol FLS'].sum() + df_res['Vol SLS'].sum():,}")
+                c2.metric("Peak FLS Staffing", df_res['FLS Agents'].max())
+                c3.metric("Peak SLS Staffing", df_res['SLS Agents'].max())
                 
             except Exception as e:
-                st.error(f"Error processing data: {e}")
-        else:
-            st.error("Please paste data into both fields.")
+                st.error(f"Error: {e}")
