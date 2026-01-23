@@ -23,7 +23,7 @@ tab_calc, tab_bulk, tab_micro = st.tabs([
     "🔬 Micro: Schedule Optimizer"
 ])
 
-# --- SIDEBAR: GLOBAL PARAMETERS (Modificación 1) ---
+# --- SIDEBAR: GLOBAL PARAMETERS ---
 st.sidebar.header("⚙️ Global Parameters")
 selected_year = st.sidebar.number_input("Year", min_value=2024, max_value=2030, value=2025)
 selected_month_name = st.sidebar.selectbox("Month", 
@@ -40,7 +40,6 @@ growth_input = st.sidebar.number_input("Growth Factor (%)", min_value=0.0, max_v
 growth = growth_input / 100
 hrs_shift = st.sidebar.number_input("Hours per Shift", value=8.0)
 
-# Moving Concurrencies to Global
 st.sidebar.divider()
 st.sidebar.subheader("🎯 Target Concurrency")
 f_c = st.sidebar.number_input("FLS Concurrency", value=2.0)
@@ -86,11 +85,9 @@ with tab_bulk:
     col_v, col_a = st.columns(2)
     with col_v:
         st.subheader("1. Volume Data")
-        st.caption("Order: Date, Email, Chat, SLS Chat, SLS Email")
         vol_bulk = st.text_area("Paste Volume here", height=200, key="vol_bulk")
     with col_a:
         st.subheader("2. AHT Data (sec)")
-        st.caption("Order: Date, SLS Email, SLS Chat, Chat, Email")
         aht_bulk = st.text_area("Paste AHT here", height=200, key="aht_bulk")
 
     if st.button("Calculate Bulk"):
@@ -111,59 +108,57 @@ with tab_bulk:
                 res.append({"Month": dt.strftime('%B %Y'), "Vol Email FLS": f"{int(v_em_g):,}", "AHT Email FLS": f"{int(r['a_em'])}s", "Vol Chat FLS": f"{int(v_ch_g):,}", "AHT Chat FLS": f"{int(r['a_ch'])}s", "Vol Email SLS": f"{int(v_sem_g):,}", "AHT Email SLS": f"{int(r['a_sem'])}s", "Vol Chat SLS": f"{int(v_sch_g):,}", "AHT Chat SLS": f"{int(r['a_sch'])}s", "TOTAL VOL": f"{int(v_em_g+v_ch_g+v_sem_g+v_sch_g):,}", "Work Days": d_l, "FLS HC": hc_f, "SLS HC": hc_s, "Total HC": hc_f + hc_s})
             st.table(res)
 
-# --- TAB 3: MICRO SCHEDULE OPTIMIZER (Modificación 2) ---
+# --- TAB 3: MICRO SCHEDULE OPTIMIZER ---
 with tab_micro:
     st.header("🔬 Raw Data to Hourly Schedule")
     
-    with st.expander("Step 1: Set Downtime & Micro Parameters"):
+    with st.expander("🚀 Optimization Targets (Simulate Efficiency Improvement)"):
         col_m1, col_m2, col_m3 = st.columns(3)
         with col_m1:
             dt_weekly = st.number_input("Weekly Downtime per Agent (Minutes)", value=120)
             dt_impact = (dt_weekly / 2400) * 100
             st.info(f"Downtime Impact: **{dt_impact:.2f}%**")
         with col_m2:
-            micro_aht_fls = st.number_input("Average AHT FLS (sec)", value=3500)
+            # Modificación: AHT en Minutos
+            micro_aht_fls_min = st.number_input("Target AHT FLS (Minutes)", value=60.0, step=0.5)
+            micro_aht_fls = micro_aht_fls_min * 60
         with col_m3:
-            micro_aht_sls = st.number_input("Average AHT SLS (sec)", value=7500)
+            # Modificación: AHT en Minutos
+            micro_aht_sls_min = st.number_input("Target AHT SLS (Minutes)", value=120.0, step=0.5)
+            micro_aht_sls = micro_aht_sls_min * 60
     
-    uploaded_file = st.file_uploader("Upload Raw CSV (Must have: 'Conversation started at (America/Lima)' and 'Team currently assigned')", type="csv")
+    uploaded_file = st.file_uploader("Upload Raw CSV (Columns needed: 'Conversation started at (America/Lima)' and 'Team currently assigned')", type="csv")
     
     if uploaded_file:
         df_raw = pd.read_csv(uploaded_file)
         time_col = 'Conversation started at (America/Lima)'
         team_col = 'Team currently assigned'
         
-        if time_col in df_raw.columns:
+        if time_col in df_raw.columns and team_col in df_raw.columns:
             df_raw[time_col] = pd.to_datetime(df_raw[time_col])
             df_raw['Hour'] = df_raw[time_col].dt.hour
             num_days = df_raw[time_col].dt.date.nunique()
             
-            # Filter by Team (assuming teams contain 'SLS' or 'FLS' in their names)
-            # You might need to adjust these keywords based on your actual team names
+            # Filter by Team keywords
             df_fls_raw = df_raw[~df_raw[team_col].str.contains('SLS', na=False)]
             df_sls_raw = df_raw[df_raw[team_col].str.contains('SLS', na=False)]
 
-            # Grouping
             fls_hourly = df_fls_raw.groupby('Hour').size().reset_index(name='Vol')
             sls_hourly = df_sls_raw.groupby('Hour').size().reset_index(name='Vol')
             
-            # Merging to ensure all hours are represented
             hourly_data = pd.DataFrame({'Hour': range(24)})
             hourly_data = hourly_data.merge(fls_hourly, on='Hour', how='left').rename(columns={'Vol': 'Vol_FLS'}).fillna(0)
             hourly_data = hourly_data.merge(sls_hourly, on='Hour', how='left').rename(columns={'Vol': 'Vol_SLS'}).fillna(0)
 
-            # Calculations
             total_micro_shrink = (shrinkage_input + dt_impact) / 100
             
             mesh_display = []
             for _, row in hourly_data.iterrows():
-                # FLS
-                avg_v_f = row['Vol_FLS'] / num_days
+                avg_v_f = (row['Vol_FLS'] / num_days) * (1 + growth)
                 log_f = (avg_v_f * micro_aht_fls) / 3600 / f_c
                 hc_f = math.ceil(log_f / (1 - total_micro_shrink)) if total_micro_shrink < 1 else 0
                 
-                # SLS
-                avg_v_s = row['Vol_SLS'] / num_days
+                avg_v_s = (row['Vol_SLS'] / num_days) * (1 + growth)
                 log_s = (avg_v_s * micro_aht_sls) / 3600 / s_c
                 hc_s = math.ceil(log_s / (1 - total_micro_shrink)) if total_micro_shrink < 1 else 0
 
@@ -176,11 +171,11 @@ with tab_micro:
                     "Total HC Required": hc_f + hc_s
                 })
             
-            st.subheader("Hourly Headcount Requirements")
+            st.subheader("Hourly Headcount Analysis")
             st.table(mesh_display)
             
             # Chart comparison
             chart_df = pd.DataFrame(mesh_display)
             st.line_chart(chart_df.set_index('Hour Interval')[['HC FLS Required', 'HC SLS Required']])
         else:
-            st.error(f"Column '{time_col}' not found.")
+            st.error(f"Required columns missing. Please check 'Conversation started at (America/Lima)' and 'Team currently assigned'.")
