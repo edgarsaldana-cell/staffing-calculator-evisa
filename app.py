@@ -100,54 +100,51 @@ with tab_bulk:
                     cap = (d_lab * hrs_shift) * (1 - shrinkage)
                     
                     # Totales con Growth
-                    v_fls = (r['v_em'] + r['v_ch']) * (1+growth)
-                    v_sls = (r['v_sch'] + r['v_sem']) * (1+growth)
-                    a_fls = (r['a_em'] + r['a_ch']) / 2
-                    a_sls = (r['a_sem'] + r['a_sch']) / 2
+                    v_em_g = r['v_em'] * (1+growth)
+                    v_ch_g = r['v_ch'] * (1+growth)
+                    v_sem_g = r['v_sem'] * (1+growth)
+                    v_sch_g = r['v_sch'] * (1+growth)
                     
-                    wl_f = (((r['v_em']*(1+growth))*r['a_em'])/3600/f_c) + (((r['v_ch']*(1+growth))*r['a_ch'])/3600/f_c)
-                    wl_s = (((r['v_sem']*(1+growth))*r['a_sem'])/3600/s_c) + (((r['v_sch']*(1+growth))*r['a_sch'])/3600/s_c)
+                    total_v = v_em_g + v_ch_g + v_sem_g + v_sch_g
+                    
+                    wl_f = ((v_em_g * r['a_em'])/3600/f_c) + ((v_ch_g * r['a_ch'])/3600/f_c)
+                    wl_s = ((v_sem_g * r['a_sem'])/3600/s_c) + ((v_sch_g * r['a_sch'])/3600/s_c)
                     
                     hc_f = math.ceil(wl_f / cap) if cap > 0 else 0
                     hc_s = math.ceil(wl_s / cap) if cap > 0 else 0
                     
                     results.append({
                         "Month": month_year,
-                        "Vol FLS": int(v_fls),
-                        "Avg AHT FLS": int(a_fls),
-                        "Vol SLS": int(v_sls),
-                        "Avg AHT SLS": int(a_sls),
+                        "Vol Email FLS": f"{int(v_em_g):,}",
+                        "AHT Email FLS": f"{int(r['a_em'])}s",
+                        "Vol Chat FLS": f"{int(v_ch_g):,}",
+                        "AHT Chat FLS": f"{int(r['a_ch'])}s",
+                        "Vol Email SLS": f"{int(v_sem_g):,}",
+                        "AHT Email SLS": f"{int(r['a_sem'])}s",
+                        "Vol Chat SLS": f"{int(v_sch_g):,}",
+                        "AHT Chat SLS": f"{int(r['a_sch'])}s",
+                        "TOTAL VOL": f"{int(total_v):,}",
                         "Work Days": d_lab,
-                        "FLS Agents": hc_f,
-                        "SLS Agents": hc_s,
-                        "Total Agents": hc_f + hc_s
+                        "FLS HC": hc_f,
+                        "SLS HC": hc_s,
+                        "Total HC": hc_f + hc_s
                     })
                 
-                df_res = pd.DataFrame(results)
-                
-                # Crear Fila de Totales
-                totals = pd.Series({
-                    "Month": "TOTAL",
-                    "Vol FLS": df_res["Vol FLS"].sum(),
-                    "Vol SLS": df_res["Vol SLS"].sum(),
-                    "FLS Agents": df_res["FLS Agents"].max(), # Usamos Max o Avg según prefieras
-                    "SLS Agents": df_res["SLS Agents"].max(),
-                    "Total Agents": df_res["Total Agents"].max()
-                })
-                
                 st.success("Analysis Complete")
-                # Mostrar tabla sin índice
-                st.table(df_res.style.format({
-                    "Vol FLS": "{:,}", "Vol SLS": "{:,}", 
-                    "Avg AHT FLS": "{:}s", "Avg AHT SLS": "{:}s"
-                }))
+                # El truco para quitar el índice: Convertir a lista de diccionarios
+                st.table(results)
                 
-                # Resumen destacado de totales
-                st.subheader("Summary Totals (Cumulative Volume & Peak Staffing)")
+                # Resumen de totales
+                st.subheader("Summary Totals")
                 c1, c2, c3 = st.columns(3)
-                c1.metric("Total Yearly Volume", f"{df_res['Vol FLS'].sum() + df_res['Vol SLS'].sum():,}")
-                c2.metric("Peak FLS Staffing", df_res['FLS Agents'].max())
-                c3.metric("Peak SLS Staffing", df_res['SLS Agents'].max())
+                # Recalculamos totales numéricos para las métricas
+                total_anual = sum([int(r["TOTAL VOL"].replace(',', '')) for r in results])
+                max_fls = max([r["FLS HC"] for r in results])
+                max_sls = max([r["SLS HC"] for r in results])
+                
+                c1.metric("Cumulative Annual Volume", f"{total_anual:,}")
+                c2.metric("Peak FLS Staffing", max_fls)
+                c3.metric("Peak SLS Staffing", max_sls)
                 
             except Exception as e:
-                st.error(f"Error: {e}")
+                st.error(f"Error processing data: {e}")
