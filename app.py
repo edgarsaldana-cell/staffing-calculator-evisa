@@ -1,69 +1,128 @@
 import streamlit as st
 import math
+import pandas as pd
+from datetime import datetime
 
-st.set_page_config(page_title="Calculadora Staffing eVisa", layout="wide")
+# --- PAGE CONFIG & CUSTOM STYLES ---
+st.set_page_config(page_title="Staffing Tool", layout="wide")
 
-st.title("Calculadora de Staffing - iVisa Support")
+# Custom CSS for Company Colors
+st.markdown(f"""
+    <style>
+    .stApp {{
+        background-color: #ecfbff;
+        color: #0b3947;
+    }}
+    h1, h2, h3, p, span, label, .stMetric {{
+        color: #0b3947 !important;
+    }}
+    .stNumberInput input, .stSelectbox div {{
+        background-color: #ffffff;
+        color: #0b3947;
+    }}
+    </style>
+    """, unsafe_content_label=True)
 
-# --- CONFIGURACIÓN GLOBAL (SIDEBAR) ---
-st.sidebar.header("⚙️ Parámetros del Mes")
-shrinkage = st.sidebar.slider("Shrinkage (%)", 0, 50, 10) / 100
-hrs_turno = st.sidebar.number_input("Horas por Turno", value=8)
-dias_mes = st.sidebar.number_input("Días Laborales del Mes", value=21)
+# --- HELPER FUNCTIONS ---
+def get_working_days(year, month):
+    start = pd.Timestamp(year, month, 1)
+    end = start + pd.offsets.MonthEnd(0)
+    return len(pd.bdate_range(start, end))
 
-# Capacidad por agente
-hrs_disponibles = (dias_mes * hrs_turno) * (1 - shrinkage)
-st.sidebar.divider()
-st.sidebar.metric("Capacidad Real / Agente", f"{hrs_disponibles:.1f} hrs")
+# --- MAIN APP ---
+st.title("📊 Workforce Management Calculator")
 
-# --- NIVEL 1 (FLS) ---
-st.header("FLS")
-col1, col2 = st.columns(2)
+# --- TAB SELECTION ---
+tab_calc, tab_bulk = st.tabs(["Monthly Calculator", "Bulk Input (Multiple Months)"])
 
-with col1:
-    st.subheader("💬 Chat FLS")
-    vol_chat_fls = st.number_input("Volumen Chat FLS", value=11691)
-    aht_chat_fls = st.number_input("AHT Chat FLS (seg)", value=3731)
-    concur_fls = st.number_input("Concurrencia FLS", value=2.0, key="c1")
+with tab_calc:
+    # --- SIDEBAR: PARAMETERS ---
+    st.sidebar.header("⚙️ Month Parameters")
     
-    workload_chat_fls = (vol_chat_fls * aht_chat_fls) / 3600 / concur_fls
-
-with col2:
-    st.subheader("✉️ Email FLS")
-    vol_mail_fls = st.number_input("Volumen Email FLS", value=4595)
-    aht_mail_fls = st.number_input("AHT Email FLS (seg)", value=3215)
-    # El email suele tener concurrencia diferente o igual, aquí usamos la de FLS
-    workload_mail_fls = (vol_mail_fls * aht_mail_fls) / 3600 / concur_fls
-
-agentes_fls = math.ceil((workload_chat_fls + workload_mail_fls) / hrs_disponibles)
-st.info(f"💡 Agentes necesarios para FLS: **{agentes_fls}**")
-
-st.divider()
-
-# --- NIVEL 2 (SLS) ---
-st.header("SLS")
-col3, col4 = st.columns(2)
-
-with col3:
-    st.subheader("💬 Chat SLS")
-    vol_chat_sls = st.number_input("Volumen Chat SLS", value=1085)
-    aht_chat_sls = st.number_input("AHT Chat SLS (seg)", value=7324)
-    concur_sls = st.number_input("Concurrencia SLS", value=1.5, key="c2")
+    selected_year = st.sidebar.number_input("Year", min_value=2024, max_value=2030, value=2025)
+    selected_month_name = st.sidebar.selectbox("Month", 
+        ["January", "February", "March", "April", "May", "June", 
+         "July", "August", "September", "October", "November", "December"], index=11)
     
-    workload_chat_sls = (vol_chat_sls * aht_chat_sls) / 3600 / concur_sls
+    month_map = {"January":1, "February":2, "March":3, "April":4, "May":5, "June":6, 
+                 "July":7, "August":8, "September":9, "October":10, "November":11, "December":12}
+    
+    work_days = get_working_days(selected_year, month_map[selected_month_name])
+    st.sidebar.write(f"Net Working Days: **{work_days}**")
 
-with col4:
-    st.subheader("✉️ Email SLS")
-    vol_mail_sls = st.number_input("Volumen Email SLS", value=361)
-    aht_mail_sls = st.number_input("AHT Email SLS (seg)", value=9927)
-    workload_mail_sls = (vol_mail_sls * aht_mail_sls) / 3600 / concur_sls
+    shrinkage = st.sidebar.slider("Shrinkage (%)", 0, 50, 10) / 100
+    growth = st.sidebar.slider("Growth Factor (%)", 0, 100, 0) / 100
+    hrs_shift = st.sidebar.number_input("Hours per Shift", value=8)
 
-agentes_sls = math.ceil((workload_chat_sls + workload_mail_sls) / hrs_disponibles)
-st.info(f"💡 Agentes necesarios para SLS: **{agentes_sls}**")
+    # Agent Capacity
+    hrs_eff = (work_days * hrs_shift) * (1 - shrinkage)
+    
+    # Calculation Logic for Inputs
+    st.sidebar.divider()
+    st.sidebar.subheader("📈 Monthly Summary")
+    
+    # Initial placeholders for summary
+    summary_placeholder = st.sidebar.empty()
 
-st.divider()
+    # --- INPUTS ---
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.header("FLS (Level 1)")
+        f_c = st.number_input("FLS Concurrency", value=2.0)
+        v_c_f = st.number_input("Chat Vol FLS", value=11691) * (1 + growth)
+        a_c_f = st.number_input("Chat AHT FLS (sec)", value=3731)
+        v_e_f = st.number_input("Email Vol FLS", value=4595) * (1 + growth)
+        a_e_f = st.number_input("Email AHT FLS (sec)", value=3215)
+        
+        wl_fls = ((v_c_f * a_c_f) / 3600 / f_c) + ((v_e_f * a_e_f) / 3600 / f_c)
+        hc_fls = math.ceil(wl_fls / hrs_eff) if hrs_eff > 0 else 0
+        st.metric("FLS Headcount", hc_fls)
 
-# --- RESULTADO FINAL ---
-total_hc = agentes_fls + agentes_sls
-st.balloons()
-st.success(f"### ✅ Headcount TOTAL Requerido: {total_hc} agentes")
+    with col2:
+        st.header("SLS (Level 2)")
+        s_c = st.number_input("SLS Concurrency", value=1.5)
+        v_c_s = st.number_input("Chat Vol SLS", value=1085) * (1 + growth)
+        a_c_s = st.number_input("Chat AHT SLS (sec)", value=7324)
+        v_e_s = st.number_input("Email Vol SLS", value=361) * (1 + growth)
+        a_e_s = st.number_input("Email AHT SLS (sec)", value=9927)
+        
+        wl_sls = ((v_c_s * a_c_s) / 3600 / s_c) + ((v_e_s * a_e_s) / 3600 / s_c)
+        hc_sls = math.ceil(wl_sls / hrs_eff) if hrs_eff > 0 else 0
+        st.metric("SLS Headcount", hc_sls)
+
+    # --- UPDATE SIDEBAR SUMMARY ---
+    total_vol = (v_c_f + v_e_f + v_c_s + v_e_s)
+    avg_aht = (a_c_f + a_e_f + a_c_s + a_e_s) / 4
+    total_hc = hc_fls + hc_sls
+    
+    summary_placeholder.markdown(f"""
+    - **Total Vol:** {total_vol:,.0f}
+    - **Avg AHT:** {avg_aht:.0f} sec
+    - **Total HC:** {total_hc} Agents
+    """)
+
+with tab_bulk:
+    st.header("Bulk Input Mode")
+    st.write("Paste your data below. Format: Month, Year, Vol, AHT")
+    
+    bulk_data = st.text_area("Paste CSV/Excel data here (Month, Year, Vol, AHT)", 
+                             "December, 2025, 17732, 4500\nJanuary, 2026, 15000, 4200")
+    
+    if st.button("Calculate Bulk"):
+        # Simple parser for the text area
+        lines = [line.split(",") for line in bulk_data.split("\n") if line]
+        results = []
+        for l in lines:
+            m_idx = month_map[l[0].strip()]
+            y_val = int(l[1].strip())
+            v_val = float(l[2].strip()) * (1 + growth)
+            a_val = float(l[3].strip())
+            
+            d_lab = get_working_days(y_val, m_idx)
+            cap = (d_lab * hrs_shift) * (1 - shrinkage)
+            # Using 1.75 as an average concurrency for the bulk preview
+            staff = math.ceil(((v_val * a_val) / 3600 / 1.75) / cap)
+            results.append({"Month": l[0], "Year": y_val, "Volume": v_val, "Req. HC": staff})
+        
+        st.table(pd.DataFrame(results))
