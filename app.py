@@ -5,7 +5,7 @@ from io import StringIO
 from datetime import datetime
 
 # --- PAGE CONFIG ---
-st.set_page_config(page_title="WFM: Strategy & Operations", layout="wide")
+st.set_page_config(page_title="Workforce Management Tool", layout="wide")
 
 # --- HELPER FUNCTIONS ---
 def get_working_days(year, month):
@@ -14,12 +14,12 @@ def get_working_days(year, month):
     return len(pd.bdate_range(start, end))
 
 # --- MAIN APP ---
-st.title("📊 Workforce Management: Strategy & Operations")
+st.title("Workforce Management: Strategy & Operations")
 
 tab_calc, tab_bulk, tab_micro = st.tabs([
-    "📍 Macro: Monthly Calculator", 
-    "🗂️ Bulk: Multi-Month Input", 
-    "🔬 Micro: Schedule Optimizer"
+    "Macro: Monthly Calculator", 
+    "Bulk: Multi-Month Input", 
+    "Micro: Schedule Optimizer"
 ])
 
 # --- SIDEBAR: GLOBAL PARAMETERS ---
@@ -37,11 +37,11 @@ growth_input = st.sidebar.number_input("Growth Factor (%)", min_value=0.0, max_v
 hrs_shift = st.sidebar.number_input("Hours per Shift (Working)", value=8.0)
 
 st.sidebar.divider()
-st.sidebar.subheader("🎯 Target Concurrency")
+st.sidebar.subheader("Target Concurrency")
 f_c = st.sidebar.number_input("FLS Concurrency", value=2.0)
 s_c = st.sidebar.number_input("SLS Concurrency", value=1.5)
 
-# --- TAB 1 & 2 (Preserving data & adding requested Summary) ---
+# --- TAB 1: MACRO ---
 with tab_calc:
     work_days = get_working_days(selected_year, month_map[selected_month_name])
     hrs_eff = (work_days * hrs_shift) * (1 - (shrinkage_input/100))
@@ -65,6 +65,7 @@ with tab_calc:
         hc_sls = math.ceil(wl_sls / hrs_eff) if hrs_eff > 0 else 0
         st.metric("SLS Headcount", hc_sls)
 
+# --- TAB 2: BULK ---
 with tab_bulk:
     st.header("Bulk Multi-Month Analysis")
     cv, ca = st.columns(2)
@@ -88,7 +89,6 @@ with tab_bulk:
                 bulk_res.append({"Month": dt.strftime('%B %Y'), "Vol FLS": int(v_f), "AHT FLS (Avg)": int((r['a_em']+r['a_ch'])/2), "Vol SLS": int(v_s), "AHT SLS (Avg)": int((r['a_sem']+r['a_sch'])/2), "TOTAL VOL": int(v_f+v_s), "FLS HC": hc_f, "SLS HC": hc_s, "Total HC": hc_f + hc_s})
             st.session_state['bulk_data'] = bulk_res
             st.table(bulk_res)
-            # Modificación 1: Resumen de Peak
             st.divider()
             c1, c2, c3 = st.columns(3)
             df_br = pd.DataFrame(bulk_res)
@@ -98,10 +98,10 @@ with tab_bulk:
 
 # --- TAB 3: MICRO ---
 with tab_micro:
-    st.header("🔬 Schedule Optimizer & 24/7 Roster")
+    st.header("Schedule Optimizer & 24/7 Roster")
     if 'bulk_data' not in st.session_state: st.warning("Run Bulk tab first."); st.stop()
     
-    with st.expander("🚀 Target Simulation"):
+    with st.expander("Target Simulation"):
         c1, c2, c3 = st.columns(3)
         dt_weekly = c1.number_input("Weekly Downtime (Min)", value=120)
         aht_f_target = c2.number_input("Target AHT FLS (Min)", value=55.0)
@@ -123,7 +123,6 @@ with tab_micro:
             fls_raw = df_raw[~df_raw[team_col].str.contains('SLS', na=False)]
             sls_raw = df_raw[df_raw[team_col].str.contains('SLS', na=False)]
             
-            # Modificación 2: Tabla de Distribución Detallada
             mesh = []
             aht_f_act_m = month_info['AHT FLS (Avg)'] / 60
             aht_s_act_m = month_info['AHT SLS (Avg)'] / 60
@@ -142,23 +141,20 @@ with tab_micro:
                 })
             st.table(mesh)
 
-            # --- ROSTER & SHIFT GROUPS (Modificación 3, 4 y 5) ---
             st.divider()
             total_hc = month_info['Total HC']
-            st.subheader(f"2. Suggested Monthly Roster (Total Headcount: {total_hc})")
+            st.subheader(f"Suggested Monthly Roster (Total Headcount: {total_hc})")
             
             days_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
             roster = []
             shift_groups = {}
             
             for i in range(1, total_hc + 1):
-                # Modificación 4: Cobertura 24h. Rotamos inicios cada hora para cubrir la madrugada.
                 start_h = (i % 24) 
                 end_h = (start_h + 9) % 24
                 shift_label = f"{start_h:02d}:00 - {end_h:02d}:00"
                 shift_groups[shift_label] = shift_groups.get(shift_label, 0) + 1
                 
-                # Modificación 2 & 4: Días libres rotativos (No solo fds)
                 off1 = days_order[(i % 7)]
                 off2 = days_order[((i + 1) % 7)]
                 
@@ -168,13 +164,12 @@ with tab_micro:
                 for d in days_order:
                     if d in [off1, off2]: agent_row[d] = "OFF"
                     else:
-                        # Modificación 5: Lunch dinámico (entre hora 3 y 5)
                         lunch_h = (start_h + (3 if i%2==0 else 5)) % 24
                         if d == dt_day: agent_row[d] = f"Work (DT @ {(start_h+2)%24:02d}:00)"
                         else: agent_row[d] = f"Work (Lunch @ {lunch_h:02d}:00)"
                 roster.append(agent_row)
             
-            st.write("### Shift Grouping (Total Agents Assigned)")
-            st.table([{"Shift": k, "Agents": v} for k, v in shift_groups.items()])
-            st.write("### Individual Roster")
+            st.write("Shift Grouping Summary")
+            st.table([{"Shift": k, "Agents": v} for k, v in shift_counts.items() if (shift_counts := shift_groups)])
+            st.write("Individual Roster")
             st.table(roster)
