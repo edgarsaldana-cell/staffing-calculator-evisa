@@ -5,7 +5,7 @@ from io import StringIO
 from datetime import datetime
 
 # --- PAGE CONFIG ---
-st.set_page_config(page_title="WFM: Macro & Micro Support", layout="wide")
+st.set_page_config(page_title="WFM: Strategy & Operations", layout="wide")
 
 # --- HELPER FUNCTIONS ---
 def get_working_days(year, month):
@@ -14,7 +14,7 @@ def get_working_days(year, month):
     return len(pd.bdate_range(start, end))
 
 # --- MAIN APP ---
-st.title("📊 Workforce Management: Strategy & Operations")
+st.title("📊 Workforce Management: Macro to Micro")
 
 tab_calc, tab_bulk, tab_micro = st.tabs([
     "📍 Macro: Monthly Calculator", 
@@ -43,7 +43,7 @@ st.sidebar.subheader("🎯 Target Concurrency")
 f_c = st.sidebar.number_input("FLS Concurrency", value=2.0)
 s_c = st.sidebar.number_input("SLS Concurrency", value=1.5)
 
-# --- TAB 1: MACRO ---
+# (Lógica de Tab 1 y Tab 2 se mantiene igual para preservar los datos)
 with tab_calc:
     work_days = get_working_days(selected_year, month_map[selected_month_name])
     hrs_eff = (work_days * hrs_shift) * (1 - shrinkage)
@@ -67,13 +67,11 @@ with tab_calc:
         hc_sls = math.ceil(wl_sls / hrs_eff) if hrs_eff > 0 else 0
         st.metric("SLS Headcount", hc_sls)
 
-# --- TAB 2: BULK INPUT (RESTAURADO DETALLE) ---
 with tab_bulk:
     st.header("Bulk Multi-Month Analysis")
     col_v, col_a = st.columns(2)
     with col_v: vol_bulk = st.text_area("Paste Volume here", height=150)
     with col_a: aht_bulk = st.text_area("Paste AHT here", height=150)
-    
     if st.button("Calculate Bulk"):
         if vol_bulk and aht_bulk:
             df_v = pd.read_csv(StringIO(vol_bulk), header=None, names=['Date','v_em','v_ch','v_sch','v_sem'])
@@ -96,75 +94,107 @@ with tab_bulk:
                     "Vol Chat SLS": int(v_sch_g), "AHT Chat SLS": int(r['a_sch']),
                     "TOTAL VOL": int(v_em_g+v_ch_g+v_sem_g+v_sch_g), "FLS HC": hc_f, "SLS HC": hc_s, "Total HC": hc_f + hc_s
                 })
-            st.session_state['bulk_data'] = bulk_res # Guardar para Optimizer
+            st.session_state['bulk_data'] = bulk_res
             st.table(bulk_res)
 
 # --- TAB 3: MICRO SCHEDULE OPTIMIZER ---
 with tab_micro:
     st.header("🔬 Schedule Optimizer & Roster")
     if 'bulk_data' not in st.session_state:
-        st.warning("⚠️ Please run 'Calculate Bulk' in the Multi-Month tab first to sync headcount.")
+        st.warning("⚠️ Please run 'Calculate Bulk' in the Multi-Month tab first.")
     
-    with st.expander("🚀 Target Simulation (What-if?)"):
+    with st.expander("🚀 Target Simulation (Target Minutes)"):
         c1, c2, c3 = st.columns(3)
         with c1: dt_weekly = st.number_input("Weekly Downtime (Min)", value=120)
         with c2: aht_f_target = st.number_input("Target AHT FLS (Min)", value=55.0)
         with c3: aht_s_target = st.number_input("Target AHT SLS (Min)", value=110.0)
 
-    uploaded_file = st.file_uploader("Upload Raw CSV", type="csv")
+    uploaded_file = st.file_uploader("Upload Raw CSV (Columns: Conversation started at (America/Lima) & Team currently assigned)", type="csv")
     
     if uploaded_file and 'bulk_data' in st.session_state:
         df_raw = pd.read_csv(uploaded_file)
         time_col = 'Conversation started at (America/Lima)'
+        team_col = 'Team currently assigned'
         df_raw[time_col] = pd.to_datetime(df_raw[time_col])
         current_month = df_raw[time_col].dt.strftime('%B %Y').iloc[0]
         num_days = df_raw[time_col].dt.date.nunique()
         
-        # Sincronizar HC desde el Bulk
         month_info = next((item for item in st.session_state['bulk_data'] if item["Month"] == current_month), None)
         
         if month_info:
-            st.success(f"Syncing data for {current_month}. Bulk Requirement: {month_info['Total HC']} agents.")
-            
-            # Análisis Horario
             df_raw['Hour'] = df_raw[time_col].dt.hour
-            hourly_vol = df_raw.groupby('Hour').size().reset_index(name='Vol')
-            hourly_vol['Avg_Arrival'] = hourly_vol['Vol'] / num_days
+            df_raw['Day'] = df_raw[time_col].dt.day_name()
             
-            # Identificar hora de menor volumen para Downtime
-            quietest_hour = int(hourly_vol.loc[hourly_vol['Avg_Arrival'].idxmin(), 'Hour'])
-            
-            # Simulación de HC Necesario por Hora
-            dt_impact = (dt_weekly / 2400) * 100
-            total_shrink = (shrinkage_input + dt_impact) / 100
+            # Separación FLS / SLS (Modificación 3)
+            fls_raw = df_raw[~df_raw[team_col].str.contains('SLS', na=False)]
+            sls_raw = df_raw[df_raw[team_col].str.contains('SLS', na=False)]
             
             mesh = []
-            for _, r in hourly_vol.iterrows():
-                # Actual (Usando AHT del Bulk)
-                aht_f_act = (month_info['AHT Email FLS'] + month_info['AHT Chat FLS']) / 2
-                aht_s_act = (month_info['AHT Email SLS'] + month_info['AHT Chat SLS']) / 2
-                hc_act = math.ceil(((r['Avg_Arrival'] * aht_f_act)/3600/f_c)/(1-total_shrink))
-                # Target
-                hc_tar = math.ceil(((r['Avg_Arrival'] * aht_f_target * 60)/3600/f_c)/(1-total_shrink))
+            days_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+            
+            # Análisis Horario Separado
+            for h in range(24):
+                vol_f = len(fls_raw[fls_raw['Hour'] == h]) / num_days
+                vol_s = len(sls_raw[sls_raw['Hour'] == h]) / num_days
                 
+                # Actual vs Target FLS
+                aht_f_act = (month_info['AHT Email FLS'] + month_info['AHT Chat FLS']) / 2
+                hc_f_act = math.ceil(((vol_f * aht_f_act)/3600/f_c)/(1-(shrinkage_input/100)))
+                hc_f_tar = math.ceil(((vol_f * aht_f_target * 60)/3600/f_c)/(1-(shrinkage_input/100)))
+                
+                # Actual vs Target SLS
+                aht_s_act = (month_info['AHT Email SLS'] + month_info['AHT Chat SLS']) / 2
+                hc_s_act = math.ceil(((vol_s * aht_s_act)/3600/s_c)/(1-(shrinkage_input/100)))
+                hc_s_tar = math.ceil(((vol_s * aht_s_target * 60)/3600/s_c)/(1-(shrinkage_input/100)))
+
                 mesh.append({
-                    "Hour": f"{int(r['Hour'])}:00", "Avg Vol": int(r['Avg_Arrival']),
-                    "HC Actual AHT": hc_act, "HC Target AHT": hc_tar, "Diff": hc_act - hc_tar
+                    "Hour": f"{h:02d}:00", "Vol FLS": round(vol_f,1), "HC FLS (Act)": hc_f_act, "HC FLS (Tar)": hc_f_tar,
+                    "Vol SLS": round(vol_s,1), "HC SLS (Act)": hc_s_act, "HC SLS (Tar)": hc_s_tar, "Total HC": hc_f_act + hc_s_act
                 })
-            st.subheader(f"Hourly Distribution - {current_month}")
+            
+            st.subheader("1. Hourly Distribution (FLS vs SLS)")
             st.table(mesh)
 
-            # --- ROSTER GENERATION ---
+            # --- ROSTER & SHIFT GROUPING ---
             st.divider()
-            st.subheader("🗓️ Suggested Agent Roster (Dynamic Downtime)")
+            st.subheader("2. Suggested Monthly Roster & Shift Groups")
+            
+            # Identificar los dos días de menor volumen para OFF DAYS (Modificación 2)
+            vol_per_day = df_raw.groupby('Day').size().reindex(days_order).fillna(0)
+            off_days = vol_per_day.nsmallest(2).index.tolist()
+            st.info(f"Optimized Off-Days based on lowest volume: **{off_days[0]} and {off_days[1]}**")
+
             roster = []
-            days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-            for i in range(1, month_info['Total HC'] + 1):
-                start_h = (7 + (i % 4) * 2) % 24 
-                agent_row = {"Agent": f"Agent {i:02d}", "Shift": f"{start_h:02d}:00-{(start_h+9)%24:02d}:00"}
-                dt_day = days[i % 5] # Distribuye DT de Lunes a Viernes
-                for d in days:
-                    if d == dt_day: agent_row[d] = f"Work (DT @ {quietest_hour}:00)"
-                    else: agent_row[d] = f"Work (Lunch @ {(start_h+4)%24:02d}:00)"
+            shift_counts = {}
+            total_hc = month_info['Total HC']
+            
+            for i in range(1, total_hc + 1):
+                # Distribuir inicios de turno según volumen
+                start_h = (7 + (i % 5) * 2) % 24 
+                end_h = (start_h + 9) % 24
+                shift_label = f"{start_h:02d}:00 - {end_h:02d}:00"
+                shift_counts[shift_label] = shift_counts.get(shift_label, 0) + 1
+                
+                # Downtime: Asegurar que sea dentro del turno (Modificación 1)
+                dt_hour = (start_h + 2) % 24 
+                lunch_hour = (start_h + 4) % 24
+                
+                agent_row = {"Agent": f"Agent {i:02d}", "Shift": shift_label}
+                dt_day = [d for d in days_order if d not in off_days][i % 5]
+                
+                for d in days_order:
+                    if d in off_days:
+                        agent_row[d] = "OFF"
+                    elif d == dt_day:
+                        agent_row[d] = f"Work (DT @ {dt_hour:02d}:00)"
+                    else:
+                        agent_row[d] = f"Work (Lunch @ {lunch_hour:02d}:00)"
                 roster.append(agent_row)
+            
+            # Modificación 4: Agrupación de Horarios
+            st.write("### Shift Grouping Summary")
+            group_data = [{"Shift": k, "Count": v} for k, v in shift_counts.items()]
+            st.table(group_data)
+            
+            st.write("### Individual Agent Roster")
             st.table(roster)
