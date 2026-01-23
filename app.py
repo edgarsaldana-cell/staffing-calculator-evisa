@@ -1,7 +1,7 @@
 import streamlit as st
 import math
 import pandas as pd
-from io import StringIO
+from io import StringIO, BytesIO
 from datetime import datetime
 
 # --- PAGE CONFIG ---
@@ -12,6 +12,13 @@ def get_working_days(year, month):
     start = pd.Timestamp(year, month, 1)
     end = start + pd.offsets.MonthEnd(0)
     return len(pd.bdate_range(start, end))
+
+def to_excel(df_list, sheet_names):
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        for df, name in zip(df_list, sheet_names):
+            df.to_excel(writer, index=False, sheet_name=name)
+    return output.getvalue()
 
 # --- MAIN APP ---
 st.title("Workforce Management: Strategy & Operations")
@@ -170,6 +177,14 @@ with tab_micro:
                 roster.append(agent_row)
             
             st.write("Shift Grouping Summary")
-            st.table([{"Shift": k, "Agents": v} for k, v in shift_counts.items() if (shift_counts := shift_groups)])
+            df_groups = pd.DataFrame([{"Shift": k, "Agents": v} for k, v in shift_groups.items()])
+            st.table(df_groups)
+            
             st.write("Individual Roster")
-            st.table(roster)
+            df_roster = pd.DataFrame(roster)
+            st.table(df_roster)
+
+            # Botón de Descarga
+            df_mesh = pd.DataFrame(mesh)
+            excel_data = to_excel([df_mesh, df_groups, df_roster], ["Hourly Analysis", "Shift Groups", "Roster"])
+            st.download_button(label="Download Roster to Excel", data=excel_data, file_name=f"Roster_{current_month}.xlsx", mime="application/vnd.ms-excel")
