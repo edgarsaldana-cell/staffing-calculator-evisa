@@ -169,7 +169,48 @@ with tab_micro:
             st.line_chart(df_mesh.set_index('Hour')[['Vol Email FLS', 'Vol Chat FLS', 'Vol Email SLS', 'Vol Chat SLS', 'HC FLS (Act)', 'HC SLS (Act)']])
 
             st.divider()
-            st.subheader(f"Shift Grouping Summary (Total HC: {m_info['Total HC']})")
+            
+            # --- NUEVA SECCIÓN: OPTIMIZED SHIFT DISTRIBUTION (MAX 12 SLOTS) ---
+            st.subheader("Optimized Shift Distribution (Max 12 Turnos Sugeridos)")
+            st.info("Esta malla agrupa al personal en máximo 12 bloques horarios para optimizar la gestión operativa.")
+            
+            # Lógica: Agrupar por bloques de inicio cada 2 horas (para cubrir 24h en 12 turnos)
+            optimized_groups = []
+            total_hc_month = m_info['Total HC']
+            
+            # Calculamos la distribución proporcional según el peso del volumen por bloque
+            # Dividimos el día en 12 bloques (00, 02, 04... 22)
+            blocks = [f"{h:02d}:00" for h in range(0, 24, 2)]
+            
+            # Peso de volumen por bloque (incluye la hora de inicio y la siguiente)
+            weights = []
+            for h in range(0, 24, 2):
+                v_block = df_mesh[df_mesh['Hour'].isin([f"{h:02d}:00", f"{(h+1):02d}:00"])]['Total HC Target'].sum()
+                weights.append(v_block)
+            
+            total_weight = sum(weights) if sum(weights) > 0 else 1
+            
+            for idx, start_label in enumerate(blocks):
+                # Asignación de agentes basada en peso
+                agents_in_block = round((weights[idx] / total_weight) * total_hc_month)
+                start_h = int(start_label[:2])
+                end_h = (start_h + 9) % 24
+                optimized_groups.append({
+                    "Shift Start": start_label,
+                    "Shift End": f"{end_h:02d}:00",
+                    "Shift Duration": "9h (8+1)",
+                    "Suggested Agents": agents_in_block
+                })
+            
+            # Ajuste para que la suma de agentes coincida con el total del mes (Bulk)
+            diff = total_hc_month - sum([g["Suggested Agents"] for g in optimized_groups])
+            if diff != 0:
+                optimized_groups[0]["Suggested Agents"] += diff # Ajuste en el primer turno para cuadrar caja
+            
+            st.table(pd.DataFrame(optimized_groups))
+
+            st.divider()
+            st.subheader(f"Shift Grouping Summary (Current Rotation: 24h)")
             days_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
             roster = []; shift_groups = {}
             for i in range(1, m_info['FLS HC'] + 1):
