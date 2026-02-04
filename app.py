@@ -170,63 +170,73 @@ with tab_micro:
 
             st.divider()
             
-            # --- NUEVA SECCIÓN: OPTIMIZED SHIFT DISTRIBUTION (MAX 12 SLOTS) ---
+            # --- SECCIÓN: OPTIMIZED SHIFT DISTRIBUTION (MAX 12 TURNOS) ---
             st.subheader("Optimized Shift Distribution (Max 12 Turnos Sugeridos)")
-            st.info("Esta malla agrupa al personal en máximo 12 bloques horarios para optimizar la gestión operativa.")
+            st.info("Agrupación de HC según picos de demanda para simplificar la gestión operativa.")
             
-            # Lógica: Agrupar por bloques de inicio cada 2 horas (para cubrir 24h en 12 turnos)
-            optimized_groups = []
             total_hc_month = m_info['Total HC']
-            
-            # Calculamos la distribución proporcional según el peso del volumen por bloque
-            # Dividimos el día en 12 bloques (00, 02, 04... 22)
-            blocks = [f"{h:02d}:00" for h in range(0, 24, 2)]
-            
-            # Peso de volumen por bloque (incluye la hora de inicio y la siguiente)
+            blocks = [f"{h:02d}:00" for h in range(0, 24, 2)] # Bloques cada 2 horas
             weights = []
             for h in range(0, 24, 2):
                 v_block = df_mesh[df_mesh['Hour'].isin([f"{h:02d}:00", f"{(h+1):02d}:00"])]['Total HC Target'].sum()
                 weights.append(v_block)
             
             total_weight = sum(weights) if sum(weights) > 0 else 1
-            
+            optimized_groups = []
             for idx, start_label in enumerate(blocks):
-                # Asignación de agentes basada en peso
                 agents_in_block = round((weights[idx] / total_weight) * total_hc_month)
                 start_h = int(start_label[:2])
                 end_h = (start_h + 9) % 24
                 optimized_groups.append({
                     "Shift Start": start_label,
                     "Shift End": f"{end_h:02d}:00",
-                    "Shift Duration": "9h (8+1)",
                     "Suggested Agents": agents_in_block
                 })
             
-            # Ajuste para que la suma de agentes coincida con el total del mes (Bulk)
+            # Cuadre de agentes
             diff = total_hc_month - sum([g["Suggested Agents"] for g in optimized_groups])
-            if diff != 0:
-                optimized_groups[0]["Suggested Agents"] += diff # Ajuste en el primer turno para cuadrar caja
+            if diff != 0: optimized_groups[0]["Suggested Agents"] += diff
             
             st.table(pd.DataFrame(optimized_groups))
 
             st.divider()
-            st.subheader(f"Shift Grouping Summary (Current Rotation: 24h)")
+            
+            # --- INDIVIDUAL AGENT ROSTER (MODIFICADO CON LOS 12 BLOQUES) ---
+            st.subheader(f"Individual Agent Roster (Basado en 12 Turnos Optimizados)")
             days_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-            roster = []; shift_groups = {}
-            for i in range(1, m_info['FLS HC'] + 1):
-                sh = (i % 24); shift = f"{sh:02d}:00-{(sh+9)%24:02d}:00"; shift_groups[shift] = shift_groups.get(shift, 0) + 1
-                row = {"Agent": f"Agent FLS {i:02d}", "Level": "FLS", "Shift": shift}
-                for d in days_order: row[d] = "OFF" if d in [days_order[i%7], days_order[(i+1)%7]] else f"Work (Lunch@{(sh+4)%24:02d}:00)"
-                roster.append(row)
-            for i in range(1, m_info['SLS HC'] + 1):
-                sh = (i % 24); shift = f"{sh:02d}:00-{(sh+9)%24:02d}:00"; shift_groups[shift] = shift_groups.get(shift, 0) + 1
-                row = {"Agent": f"Agent SLS {i:02d}", "Level": "SLS", "Shift": shift}
-                for d in days_order: row[d] = "OFF" if d in [days_order[i%7], days_order[(i+1)%7]] else f"Work (Lunch@{(sh+4)%24:02d}:00)"
+            roster = []
+            
+            # Generar lista de turnos según la distribución optimizada
+            assigned_shifts = []
+            for group in optimized_groups:
+                for _ in range(group["Suggested Agents"]):
+                    assigned_shifts.append(f"{group['Shift Start']}-{group['Shift End']}")
+
+            # Asignar agentes de FLS y SLS respetando el orden de turnos optimizados
+            for i in range(1, total_hc_month + 1):
+                shift = assigned_shifts[i-1] if i <= len(assigned_shifts) else assigned_shifts[0]
+                start_h = int(shift.split(':')[0])
+                level = "FLS" if i <= m_info['FLS HC'] else "SLS"
+                agent_id = f"Agent {level} {i:02d}"
+                
+                off1 = days_order[(i % 7)]
+                off2 = days_order[((i + 1) % 7)]
+                
+                row = {"Agent": agent_id, "Level": level, "Shift": shift}
+                for d in days_order:
+                    if d in [off1, off2]:
+                        row[d] = "OFF"
+                    else:
+                        # Almuerzo dinámico en la hora 4 o 5 del turno
+                        lunch_h = (start_h + (4 if i % 2 == 0 else 5)) % 24
+                        row[d] = f"Work (Lunch@{lunch_h:02d}:00)"
                 roster.append(row)
             
-            st.table(pd.DataFrame([{"Shift": k, "Agents": v} for k, v in shift_groups.items()]))
-            st.subheader("Individual Agent Roster")
-            st.table(pd.DataFrame(roster).style.pipe(style_levels))
+            df_roster = pd.DataFrame(roster)
+            st.table(df_roster.style.pipe(style_levels))
             
-            excel_data = to_excel([df_mesh, pd.DataFrame(roster)], ["Analysis", "Roster"])
-            st.download_button(label="Download Roster to Excel", data=excel_data, file_name=f"WFM_Roster_{current_month}.xlsx")
+            # Resumen final de cobertura
+            st.write(f"**Total Agentes Asignados:** {len(df_roster)} (FLS: {m_info['FLS HC']}, SLS: {m_info['SLS HC']})")
+            
+            excel_data = to_excel([df_mesh, pd.DataFrame(optimized_groups), df_roster], ["Hourly Analysis", "Optimized Shifts", "Roster"])
+            st.download_button(label="Download Full WFM Report (Excel)", data=excel_data, file_name=f"WFM_Report_Optimized_{current_month}.xlsx")
