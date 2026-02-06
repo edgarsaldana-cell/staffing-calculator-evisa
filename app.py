@@ -170,21 +170,34 @@ with tab_micro:
 
             st.divider()
             
-            # --- SECCIÓN: OPTIMIZED SHIFT DISTRIBUTION (MAX 12 TURNOS) ---
+            # --- SECCIÓN: OPTIMIZED SHIFT DISTRIBUTION (CON REGLA 00:00 y 02:00) ---
             st.subheader("Optimized Shift Distribution (Max 12 Turnos Sugeridos)")
-            st.info("Agrupación de HC según picos de demanda para simplificar la gestión operativa.")
+            st.warning("Regla Operativa: No se permiten inicios a las 00:00 o 02:00 AM. El personal ha sido redistribuido.")
             
             total_hc_month = m_info['Total HC']
-            blocks = [f"{h:02d}:00" for h in range(0, 24, 2)] # Bloques cada 2 horas
+            # Definimos bloques de inicio prohibidos y válidos
+            prohibited_starts = [0, 2]
+            valid_blocks = [h for h in range(0, 24, 2) if h not in prohibited_starts]
+            
             weights = []
             for h in range(0, 24, 2):
                 v_block = df_mesh[df_mesh['Hour'].isin([f"{h:02d}:00", f"{(h+1):02d}:00"])]['Total HC Target'].sum()
                 weights.append(v_block)
             
-            total_weight = sum(weights) if sum(weights) > 0 else 1
+            # Redistribución de pesos de 00:00 y 02:00 (se mueven a 22:00 y 04:00 respectivamente)
+            # Indice 0 es 00:00 -> se suma a Indice 11 (22:00)
+            # Indice 1 es 02:00 -> se suma a Indice 2 (04:00)
+            weights[11] += weights[0]
+            weights[2] += weights[1]
+            
+            # Limpiamos los bloques prohibidos
+            final_weights = [weights[i] for i in range(len(weights)) if i not in [0, 1]]
+            final_blocks = [f"{h:02d}:00" for h in valid_blocks]
+            
+            total_weight = sum(final_weights) if sum(final_weights) > 0 else 1
             optimized_groups = []
-            for idx, start_label in enumerate(blocks):
-                agents_in_block = round((weights[idx] / total_weight) * total_hc_month)
+            for idx, start_label in enumerate(final_blocks):
+                agents_in_block = round((final_weights[idx] / total_weight) * total_hc_month)
                 start_h = int(start_label[:2])
                 end_h = (start_h + 9) % 24
                 optimized_groups.append({
@@ -193,7 +206,7 @@ with tab_micro:
                     "Suggested Agents": agents_in_block
                 })
             
-            # Cuadre de agentes
+            # Cuadre de agentes total
             diff = total_hc_month - sum([g["Suggested Agents"] for g in optimized_groups])
             if diff != 0: optimized_groups[0]["Suggested Agents"] += diff
             
@@ -201,33 +214,43 @@ with tab_micro:
 
             st.divider()
             
-            # --- INDIVIDUAL AGENT ROSTER (MODIFICADO CON LOS 12 BLOQUES) ---
-            st.subheader(f"Individual Agent Roster (Basado en 12 Turnos Optimizados)")
+            # --- INDIVIDUAL AGENT ROSTER (CON REGLA 90/10 DESCANSOS) ---
+            st.subheader(f"Individual Agent Roster (Regla Descansos: 1 Semanal + 1 Fin de Semana)")
+            st.info("El 90% de los agentes descansa un día entre semana y un día el fin de semana.")
             days_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-            roster = []
+            weekday_list = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+            weekend_list = ["Saturday", "Sunday"]
             
-            # Generar lista de turnos según la distribución optimizada
+            roster = []
             assigned_shifts = []
             for group in optimized_groups:
                 for _ in range(group["Suggested Agents"]):
                     assigned_shifts.append(f"{group['Shift Start']}-{group['Shift End']}")
 
-            # Asignar agentes de FLS y SLS respetando el orden de turnos optimizados
             for i in range(1, total_hc_month + 1):
                 shift = assigned_shifts[i-1] if i <= len(assigned_shifts) else assigned_shifts[0]
                 start_h = int(shift.split(':')[0])
                 level = "FLS" if i <= m_info['FLS HC'] else "SLS"
                 agent_id = f"Agent {level} {i:02d}"
                 
-                off1 = days_order[(i % 7)]
-                off2 = days_order[((i + 1) % 7)]
+                # Lógica 90% Descanso: 1 Weekday + 1 Weekend
+                # Usamos el modulo para rotar dias
+                off_weekday = weekday_list[i % 5]
+                off_weekend = weekend_list[i % 2]
+                
+                # El 10% restante o rotación para asegurar cobertura (ajuste de seguridad)
+                if i % 10 == 0: # Caso especial para rotar fines de semana si es necesario
+                    off1 = days_order[(i % 7)]
+                    off2 = days_order[((i + 1) % 7)]
+                else:
+                    off1 = off_weekday
+                    off2 = off_weekend
                 
                 row = {"Agent": agent_id, "Level": level, "Shift": shift}
                 for d in days_order:
                     if d in [off1, off2]:
                         row[d] = "OFF"
                     else:
-                        # Almuerzo dinámico en la hora 4 o 5 del turno
                         lunch_h = (start_h + (4 if i % 2 == 0 else 5)) % 24
                         row[d] = f"Work (Lunch@{lunch_h:02d}:00)"
                 roster.append(row)
@@ -235,7 +258,6 @@ with tab_micro:
             df_roster = pd.DataFrame(roster)
             st.table(df_roster.style.pipe(style_levels))
             
-            # Resumen final de cobertura
             st.write(f"**Total Agentes Asignados:** {len(df_roster)} (FLS: {m_info['FLS HC']}, SLS: {m_info['SLS HC']})")
             
             excel_data = to_excel([df_mesh, pd.DataFrame(optimized_groups), df_roster], ["Hourly Analysis", "Optimized Shifts", "Roster"])
